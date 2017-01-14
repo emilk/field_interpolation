@@ -1,0 +1,6 @@
+[submodule "libs/emilib"]
+	path = libs/emilib
+	url = git@github.com:emilk/emilib.git
+[submodule "libs/imgui"]
+	path = libs/imgui
+	url = git@github.com:ocornut/imgui.git
