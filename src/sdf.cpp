@@ -15,18 +15,16 @@ void add_point_constraint(
 
 	auto index = [=](int x, int y) -> int { return y * resolution + x; };
 
-	const float xf = point.x * resolution;
-	const float yf = point.y * resolution;
-	const int x_floored = std::floor(xf);
-	const int y_floored = std::floor(yf);
+	const int x_floored = std::floor(point.x);
+	const int y_floored = std::floor(point.y);
 
 	if (x_floored < 0 || resolution <= x_floored) { return; }
 	if (y_floored < 0 || resolution <= y_floored) { return; }
 
 	if (0.0f < strengths.data_pos) {
 		// Bilinear interpolation of points influence:
-		const float tx = xf - x_floored;
-		const float ty = yf - y_floored;
+		const float tx = point.x - x_floored;
+		const float ty = point.y - y_floored;
 
 		add_equation(eq, 0.0f, {{index(x_floored, y_floored), strengths.data_pos * (1 - tx) * (1 - ty)}});
 
@@ -45,8 +43,8 @@ void add_point_constraint(
 
 	if (0.0f < strengths.data_normal) {
 		// Influence delta between the two closest cells on each axis:
-		const int x_rounded = std::round(xf);
-		const int y_rounded = std::round(yf);
+		const int x_rounded = std::round(point.x);
+		const int y_rounded = std::round(point.y);
 
 		if (0 <= x_floored && x_floored + 1 < resolution
 		 && 0 <= y_rounded && y_rounded < resolution) {

@@ -12,7 +12,7 @@ struct Point
 
 struct Strengths
 {
-	float data_pos    = 0.01f; // How much we trust the point positions
+	float data_pos    = 1.00f; // How much we trust the point positions
 	float data_normal = 1.00f; // How much we trust the point normals
 	float model_0     = 0.00f; // How much we believe the SDF to be zero (regularization).
 	float model_1     = 0.00f; // How much we believe the SDF to be uniform.
@@ -42,8 +42,9 @@ inline void add_equation(LinearEquation* eq, float rhs, std::initializer_list<Li
 	eq->rhs.emplace_back(rhs);
 }
 
-// Points assumed to be in [0, 1] square.
+// Will create a lattice at coordinates from 0 to resolution - 1 (inclusive).
+// Will return approximate distance to the iso-surface at these lattice coordinates.
 // returns resolution * resolution distances on success, empty vector on fail.
-// The first distances is at the points [0,0], the last at [1, 1].
+// The first distance is at the point [0,0], the last at [resolution - 1, resolution - 1].
 std::vector<float> generate_sdf(size_t resolution, const std::vector<Point>& points,
     const Strengths& strengths, bool double_precision);

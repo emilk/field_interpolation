@@ -8,3 +8,5 @@
 * 1D ImGui with very simple model and graph and low-res
 	* Use to verify iso-surface positioning is perfect
 * Generalize code to multiple dimensions
+* Measure marching_squares area for accuracy.
+* Add option to make point distribution lob-sided (more on right than on the left).

@@ -11,6 +11,7 @@
 #include <emilib/imgui_helpers.hpp>
 #include <emilib/imgui_sdl.hpp>
 #include <emilib/irange.hpp>
+#include <emilib/marching_squares.hpp>
 #include <emilib/tga.hpp>
 #include <loguru.hpp>
 
@@ -28,15 +29,16 @@ struct Circle
 
 	float  center     =  0.5f;
 	float  radius     =  0.35f;
+
+	float angle_offset = 0;
 };
 
 struct Options
 {
 	int                 seed             =  0;
-	// size_t                   resolution = 64;
-	size_t              resolution       = 13;
+	size_t              resolution       = 16;
 	std::vector<Circle> features;
-	float               pos_noise        =  0.02f;
+	float               pos_noise        =  0.005f;
 	float               dir_noise        =  0.05f;
 	Strengths           strengths;
 	bool                double_precision = true;
@@ -62,16 +64,16 @@ struct Result
 	float              blob_area;
 };
 
-void generate_points(std::vector<Point>* out_points, const Circle& options)
+void generate_points(std::vector<Point>* out_points, const Circle& circle)
 {
 	CHECK_NOTNULL_F(out_points);
-	float sign = options.inverted ? -1 : +1;
+	float sign = circle.inverted ? -1 : +1;
 
-	for (size_t i = 0; i < options.num_points; ++i)
+	for (size_t i = 0; i < circle.num_points; ++i)
 	{
-		float angle = i * M_PI * 2 / options.num_points;
-		float x = options.center + options.radius * std::cos(angle);
-		float y = options.center + options.radius * std::sin(angle);
+		float angle = circle.angle_offset + i * M_PI * 2 / circle.num_points;
+		float x = circle.center + circle.radius * std::cos(angle);
+		float y = circle.center + circle.radius * std::sin(angle);
 		float dx = sign * std::cos(angle);
 		float dy = sign * std::sin(angle);
 		out_points->push_back(Point{x, y, dx, dy});
@@ -104,6 +106,9 @@ Result generate(const Options& options)
 	std::normal_distribution<float> pos_noise(0.0, options.pos_noise);
 	std::normal_distribution<float> dir_noise(0.0, options.dir_noise);
 
+	std::vector<Point> points_on_lattice;
+	points_on_lattice.reserve(result.points.size());
+
 	for (auto& point : result.points) {
 		point.x += pos_noise(rng);
 		point.y += pos_noise(rng);
@@ -111,10 +116,18 @@ Result generate(const Options& options)
 		angle += dir_noise(rng);
 		point.dx += std::cos(angle);
 		point.dy += std::sin(angle);
+
+		Point on_lattice = point;
+		on_lattice.x *= (resolution - 1.0f);
+		on_lattice.y *= (resolution - 1.0f);
+		points_on_lattice.push_back(on_lattice);
 	}
 
-	result.sdf = generate_sdf(options.resolution, result.points, options.strengths, options.double_precision);
-	CHECK_EQ_F(result.sdf.size(), resolution * resolution);
+	result.sdf = generate_sdf(options.resolution, points_on_lattice, options.strengths, options.double_precision);
+	if (result.sdf.size() != resolution * resolution) {
+		LOG_F(ERROR, "Failed to find a solution");
+		result.sdf.resize(resolution * resolution, 0.0f);
+	}
 
 	double area_pixels = 0;
 
@@ -150,9 +163,10 @@ bool showFeatureOption(Circle* circle)
 
 	ImGui::Text("Circle:");
 	changed |= ImGui::Checkbox("inverted (hole)", &circle->inverted);
-	changed |= ImGuiPP::SliderSize("num_points", &circle->num_points, 1, 1024, 2);
-	changed |= ImGui::SliderFloat("center",      &circle->center,     0,    1);
-	changed |= ImGui::SliderFloat("radius",      &circle->radius,     0,    1);
+	changed |= ImGuiPP::SliderSize("num_points",  &circle->num_points,   1, 1024, 2);
+	changed |= ImGui::SliderFloat("center",       &circle->center,       0,    1);
+	changed |= ImGui::SliderFloat("radius",       &circle->radius,       0,    1);
+	changed |= ImGui::SliderAngle("angle_offset", &circle->angle_offset, 0,  360);
 
 	return changed;
 }
@@ -187,9 +201,19 @@ bool showOptions(Options* options)
 		ImGui::PushID(i);
 		changed |= showFeatureOption(&options->features[i]);
 		ImGui::PopID();
+		ImGui::Separator();
+	}
+	if (options->features.size() >= 2 && ImGui::Button("Remove feature")) {
+		options->features.pop_back();
+		changed = true;
+		ImGui::SameLine();
+	}
+	if (ImGui::Button("Add feature")) {
+		options->features.push_back(Circle{});
+		changed = true;
 	}
 	ImGui::Separator();
-	changed |= ImGui::SliderFloat("pos_noise", &options->pos_noise, 0, 1, "%.4f", 4);
+	changed |= ImGui::SliderFloat("pos_noise", &options->pos_noise, 0, 0.1, "%.4f");
 	changed |= ImGui::SliderAngle("dir_noise", &options->dir_noise, 0,    360);
 	ImGui::Separator();
 	changed |= showStrengths(&options->strengths);
@@ -209,22 +233,34 @@ ImGuiWindowFlags fullscreen_window_flags()
 	return ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar;
 }
 
-void draw_points(const Options& options, const std::vector<Point>& points, ImVec2 canvas_size)
+void draw_points(const Options& options, const std::vector<Point>& points, ImVec2 canvas_pos, ImVec2 canvas_size)
 {
-	ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
-	ImGui::InvisibleButton("canvas", canvas_size);
 	ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-	for (size_t i : emilib::irange<size_t>(0, options.resolution)) {
+	// Draw "voxel" sides
+	for (size_t i : emilib::irange<size_t>(0, options.resolution - 1)) {
 		const float left   = canvas_pos.x;
 		const float right  = canvas_pos.x + canvas_size.x;
 		const float top    = canvas_pos.y;
 		const float bottom = canvas_pos.y + canvas_size.y;
-		const float center_f = static_cast<float>(i) / (options.resolution - 1.0f);
+		const float center_f = static_cast<float>(i + 0.5f) / (options.resolution - 1.0f);
 		const float center_x = canvas_pos.x + canvas_size.x * center_f;
 		const float center_y = canvas_pos.y + canvas_size.y * center_f;
 		draw_list->AddLine({left, center_y}, {right, center_y}, ImColor(1.0f, 1.0f, 1.0f, 0.25f));
 		draw_list->AddLine({center_x, top}, {center_x, bottom}, ImColor(1.0f, 1.0f, 1.0f, 0.25f));
+	}
+
+	if (options.resolution < 64) {
+		// Draw sample points
+		for (size_t xi : emilib::irange<size_t>(0, options.resolution)) {
+			for (size_t yi : emilib::irange<size_t>(0, options.resolution)) {
+				const float x = static_cast<float>(xi) / (options.resolution - 1.0f);
+				const float y = static_cast<float>(yi) / (options.resolution - 1.0f);
+				const float center_x = canvas_pos.x + canvas_size.x * x;
+				const float center_y = canvas_pos.y + canvas_size.y * y;
+				draw_list->AddCircleFilled({center_x, center_y}, 1, ImColor(1.0f, 1.0f, 1.0f, 0.25f), 4);
+			}
+		}
 	}
 
 	for (const auto& point : points) {
@@ -237,6 +273,28 @@ void draw_points(const Options& options, const std::vector<Point>& points, ImVec
 	}
 }
 
+void draw_blob(size_t resolution, const float* sdf, ImVec2 canvas_pos, ImVec2 canvas_size)
+{
+	const auto lines = emilib::marching_squares(resolution, resolution, sdf);
+
+	ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+	CHECK_F(lines.size() % 4 == 0);
+
+	for (size_t i = 0; i < lines.size(); i += 4) {
+		float x0 = lines[i + 0];
+		float y0 = lines[i + 1];
+		float x1 = lines[i + 2];
+		float y1 = lines[i + 3];
+
+		x0 = canvas_pos.x + canvas_size.x * (x0 / (resolution - 1.0f));
+		y0 = canvas_pos.y + canvas_size.y * (y0 / (resolution - 1.0f));
+		x1 = canvas_pos.x + canvas_size.x * (x1 / (resolution - 1.0f));
+		y1 = canvas_pos.y + canvas_size.y * (y1 / (resolution - 1.0f));
+
+		draw_list->AddLine({x0, y0}, {x1, y1}, ImColor(1.0f, 0.0f, 0.0f, 1.0f));
+	}
+}
 int main(int argc, char* argv[])
 {
 	loguru::g_colorlogtostderr = false;
@@ -282,14 +340,18 @@ int main(int argc, char* argv[])
 			}
 		}
 
-		if (ImGui::Begin("Output")) {
+		if (ImGui::Begin("Result")) {
 			ImGui::Text("Model area: %.3f, sdf blob area: %.3f", area(options.features), result.blob_area);
 
-			draw_points(options, result.points, {384, 384});
+			ImVec2 canvas_size{384, 384};
+			ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
+			ImGui::InvisibleButton("canvas", canvas_size);
+			draw_points(options, result.points, canvas_pos, canvas_size);
+			draw_blob(options.resolution, result.sdf.data(), canvas_pos, canvas_size);
 
-			ImGui::Image(reinterpret_cast<ImTextureID>(sdf_texture.id()), {384, 384});
+			ImGui::Image(reinterpret_cast<ImTextureID>(sdf_texture.id()), canvas_size);
 			ImGui::SameLine();
-			ImGui::Image(reinterpret_cast<ImTextureID>(blob_texture.id()), {384, 384});
+			ImGui::Image(reinterpret_cast<ImTextureID>(blob_texture.id()), canvas_size);
 
 			if (ImGui::Button("Save images")) {
 				const auto res = options.resolution;
