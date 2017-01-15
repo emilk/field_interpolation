@@ -8,9 +8,9 @@
 using VectorXr = Eigen::Matrix<Real, Eigen::Dynamic, 1>;
 
 std::vector<Real> solve_sparse_linear(
-	int                               columns,
-	const std::vector<Triplet<Real>>& triplets,
-	const std::vector<Real>&          rhs)
+	int                          columns,
+	const std::vector<TripletR>& triplets,
+	const std::vector<Real>&     rhs)
 {
 	std::vector<Eigen::Triplet<Real>> eigen_triplets;
 	eigen_triplets.reserve(triplets.size());

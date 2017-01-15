@@ -2,6 +2,7 @@ set -eu
 
 if [ ! -z ${1+x} ] && [ $1 == "clean" ]; then
 	rm -rf build/
+	rm *.bin
 	exit 0
 fi
 
@@ -10,11 +11,12 @@ fi
 mkdir -p build
 
 CXX=g++
-CPPFLAGS="--std=c++14 -Wall -Wpedantic -Wno-gnu-zero-variadic-macro-arguments -g -DNDEBUG"
+CPPFLAGS="--std=c++14 -stdlib=libc++ -Wall -Wpedantic -Wno-gnu-zero-variadic-macro-arguments -g -DNDEBUG"
 CPPFLAGS="$CPPFLAGS -O2"
 COMPILE_FLAGS="$CPPFLAGS -I libs -I libs/emilib -I /opt/local/include/eigen3"
 LDLIBS="-lstdc++ -lpthread -ldl"
 LDLIBS="$LDLIBS -lsdl2 -lglew -framework OpenGL"
+# LDLIBS="$LDLIBS -ljemalloc"
 OBJECTS=""
 
 for source_path in src/*.cpp; do

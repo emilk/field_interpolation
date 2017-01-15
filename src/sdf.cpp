@@ -5,12 +5,16 @@
 #include <loguru.hpp>
 
 void add_point_constraint(
-	std::vector<Triplet<Real>>* triplets,
+	std::vector<TripletR>* triplets,
 	std::vector<Real>*          rhs,
 	size_t                      resolution,
 	const Strengths&            strengths,
 	const Point&                point)
 {
+	CHECK_NOTNULL_F(triplets);
+	CHECK_NOTNULL_F(rhs);
+	ERROR_CONTEXT("row", rhs->size());
+
 	auto index = [=](int x, int y) { return y * resolution + x; };
 
 	const float xf = point.x * resolution;
@@ -26,22 +30,22 @@ void add_point_constraint(
 		const float tx = xf - x_floored;
 		const float ty = yf - y_floored;
 
-		triplets->emplace_back(rhs->size(), index(x_floored, y_floored), strengths.data_pos * (1 - tx) * (1 - ty));
-		rhs->emplace_back(0.0f);
+		triplets->push_back(TripletR(rhs->size(), index(x_floored, y_floored), strengths.data_pos * (1 - tx) * (1 - ty)));
+		rhs->push_back(0.0f);
 
 		if (x_floored + 1 < resolution) {
-			triplets->emplace_back(rhs->size(), index(x_floored + 1, y_floored), strengths.data_pos * tx * (1 - ty));
-			rhs->emplace_back(0.0f);
+			triplets->push_back(TripletR(rhs->size(), index(x_floored + 1, y_floored), strengths.data_pos * tx * (1 - ty)));
+			rhs->push_back(0.0f);
 		}
 
 		if (y_floored + 1 < resolution) {
-			triplets->emplace_back(rhs->size(), index(x_floored, y_floored + 1), strengths.data_pos * (1 - tx) * ty);
-			rhs->emplace_back(0.0f);
+			triplets->push_back(TripletR(rhs->size(), index(x_floored, y_floored + 1), strengths.data_pos * (1 - tx) * ty));
+			rhs->push_back(0.0f);
 		}
 
 		if (x_floored + 1 < resolution && y_floored + 1 < resolution) {
-			triplets->emplace_back(rhs->size(), index(x_floored + 1, y_floored + 1), strengths.data_pos * tx * ty);
-			rhs->emplace_back(0.0f);
+			triplets->push_back(TripletR(rhs->size(), index(x_floored + 1, y_floored + 1), strengths.data_pos * tx * ty));
+			rhs->push_back(0.0f);
 		}
 	}
 
@@ -50,79 +54,81 @@ void add_point_constraint(
 		const int x_rounded = std::round(xf);
 		const int y_rounded = std::round(yf);
 
-		if (0 <= x_floored && x_floored + 1 < resolution &&
-		    0 <= y_rounded && y_rounded < resolution) {
+		if (0 <= x_floored && x_floored + 1 < resolution
+		 && 0 <= y_rounded && y_rounded < resolution) {
 			// d f(x, y) / dx = point.dx
-			triplets->emplace_back(rhs->size(), index(x_floored + 0, y_rounded), -strengths.data_normal);
-			triplets->emplace_back(rhs->size(), index(x_floored + 1, y_rounded), +strengths.data_normal);
-			rhs->emplace_back(point.dx * strengths.data_normal);
+			triplets->push_back(TripletR(rhs->size(), index(x_floored + 0, y_rounded), -strengths.data_normal));
+			triplets->push_back(TripletR(rhs->size(), index(x_floored + 1, y_rounded), +strengths.data_normal));
+			rhs->push_back(point.dx * strengths.data_normal);
 		}
 
-		if (0 <= x_rounded && x_rounded < resolution &&
-		    0 <= y_floored && y_floored + 1 < resolution) {
+		if (0 <= x_rounded && x_rounded < resolution
+		 && 0 <= y_floored && y_floored + 1 < resolution) {
 			// d f(x, y) / dy = point.dy
-			triplets->emplace_back(rhs->size(), index(x_rounded, y_floored + 0), -strengths.data_normal);
-			triplets->emplace_back(rhs->size(), index(x_rounded, y_floored + 1), +strengths.data_normal);
-			rhs->emplace_back(point.dy * strengths.data_normal);
+			triplets->push_back(TripletR(rhs->size(), index(x_rounded, y_floored + 0), -strengths.data_normal));
+			triplets->push_back(TripletR(rhs->size(), index(x_rounded, y_floored + 1), +strengths.data_normal));
+			rhs->push_back(point.dy * strengths.data_normal);
 		}
 	}
 }
 
 void add_model_constraint(
-	std::vector<Triplet<Real>>* triplets,
-	std::vector<Real>*          rhs,
-	size_t                      resolution,
-	const Strengths&            strengths,
-	int                         x,
-	int                         y)
+	std::vector<TripletR>* triplets,
+	std::vector<Real>*     rhs,
+	size_t                 resolution,
+	const Strengths&       strengths,
+	int                    x,
+	int                    y)
 {
 	auto index = [=](int x, int y) { return y * resolution + x; };
 
 	if (strengths.model_0 > 0.0f) {
-		triplets->emplace_back(rhs->size(), index(x, y), strengths.model_0);
-		rhs->emplace_back(0);
+		triplets->push_back(TripletR(rhs->size(), index(x, y), strengths.model_0));
+		rhs->push_back(0);
 	}
 
 	if (strengths.model_1 > 0.0f) {
 		if (0 < x) {
 			// df/dx = 0
-			triplets->emplace_back(rhs->size(), index(x - 1, y), -strengths.model_1);
-			triplets->emplace_back(rhs->size(), index(x + 0, y), +strengths.model_1);
-			rhs->emplace_back(0);
+			triplets->push_back(TripletR(rhs->size(), index(x - 1, y), -strengths.model_1));
+			triplets->push_back(TripletR(rhs->size(), index(x + 0, y), +strengths.model_1));
+			rhs->push_back(0);
 		}
 
 		if (0 < y) {
 			// df/dy = 0
-			triplets->emplace_back(rhs->size(), index(x, y - 1), -strengths.model_1);
-			triplets->emplace_back(rhs->size(), index(x, y + 0), +strengths.model_1);
-			rhs->emplace_back(0);
+			triplets->push_back(TripletR(rhs->size(), index(x, y - 1), -strengths.model_1));
+			triplets->push_back(TripletR(rhs->size(), index(x, y + 0), +strengths.model_1));
+			rhs->push_back(0);
 		}
 	}
 
 	if (strengths.model_2 > 0.0f) {
-		if (0 < x && x < resolution - 1) {
+		if (0 < x && x + 1 < resolution) {
 			// d2f/dx2 = 0
-			triplets->emplace_back(rhs->size(), index(x - 1, y), +1 * strengths.model_2);
-			triplets->emplace_back(rhs->size(), index(x + 0, y), -2 * strengths.model_2);
-			triplets->emplace_back(rhs->size(), index(x + 1, y), +1 * strengths.model_2);
-			rhs->emplace_back(0);
+			triplets->push_back(TripletR(rhs->size(), index(x - 1, y), +1 * strengths.model_2));
+			triplets->push_back(TripletR(rhs->size(), index(x + 0, y), -2 * strengths.model_2));
+			triplets->push_back(TripletR(rhs->size(), index(x + 1, y), +1 * strengths.model_2));
+			rhs->push_back(0);
 		}
 
-		if (0 < y && y < resolution - 1) {
+		if (0 < y && y + 1 < resolution) {
 			// d2f/dy2 = 0
-			triplets->emplace_back(rhs->size(), index(x, y - 1), +1 * strengths.model_2);
-			triplets->emplace_back(rhs->size(), index(x, y + 0), -2 * strengths.model_2);
-			triplets->emplace_back(rhs->size(), index(x, y + 1), +1 * strengths.model_2);
-			rhs->emplace_back(0);
+			triplets->push_back(TripletR(rhs->size(), index(x, y - 1), +1 * strengths.model_2));
+			triplets->push_back(TripletR(rhs->size(), index(x, y + 0), -2 * strengths.model_2));
+			triplets->push_back(TripletR(rhs->size(), index(x, y + 1), +1 * strengths.model_2));
+			rhs->push_back(0);
 		}
 	}
 }
 
 std::vector<float> generate_sdf(
-    size_t resolution, const std::vector<Point>& points, const Strengths& strengths)
+	size_t resolution, const std::vector<Point>& points, const Strengths& strengths)
 {
+	ERROR_CONTEXT("resolution", resolution);
+	ERROR_CONTEXT("points", points.size());
 	LOG_SCOPE_F(INFO, "generate_sdf");
-	std::vector<Triplet<Real>> triplets;
+	std::vector<TripletR> triplets;
 	std::vector<Real> rhs;
 
 	// Data constraints:
