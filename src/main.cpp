@@ -32,13 +32,14 @@ struct Circle
 
 struct Options
 {
-	int                 seed       =  0;
+	int                 seed             =  0;
 	// size_t                   resolution = 64;
-	size_t              resolution = 13;
+	size_t              resolution       = 13;
 	std::vector<Circle> features;
-	float               pos_noise  =  0.02f;
-	float               dir_noise  =  0.05f;
+	float               pos_noise        =  0.02f;
+	float               dir_noise        =  0.05f;
 	Strengths           strengths;
+	bool                double_precision = true;
 
 	Options()
 	{
@@ -112,7 +113,7 @@ Result generate(const Options& options)
 		point.dy += std::sin(angle);
 	}
 
-	result.sdf = generate_sdf(options.resolution, result.points, options.strengths);
+	result.sdf = generate_sdf(options.resolution, result.points, options.strengths, options.double_precision);
 	CHECK_EQ_F(result.sdf.size(), resolution * resolution);
 
 	double area_pixels = 0;
@@ -192,6 +193,7 @@ bool showOptions(Options* options)
 	changed |= ImGui::SliderAngle("dir_noise", &options->dir_noise, 0,    360);
 	ImGui::Separator();
 	changed |= showStrengths(&options->strengths);
+	changed |= ImGui::Checkbox("Solve with double precision", &options->double_precision);
 
 	return changed;
 }

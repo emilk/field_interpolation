@@ -1,7 +1,6 @@
 # Signed distance field from least-squares of sparse linear equations
 
 # TODO
-* Float vs double
 * Other shapes:
 	* Box
 	* Something intricate, e.g. a fork.

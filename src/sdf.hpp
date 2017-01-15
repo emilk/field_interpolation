@@ -22,14 +22,14 @@ struct Strengths
 /// Sparse Ax=b where A is described by `triplets` and `rhs` is b.
 struct LinearEquation
 {
-	std::vector<TripletR> triplets;
-	std::vector<Real>     rhs;
+	std::vector<Triplet> triplets;
+	std::vector<float>   rhs;
 };
 
 struct LinearEquationPair
 {
-	int  column;
-	Real value;
+	int   column;
+	float value;
 };
 
 /// Helper to add a row to the linear equation
@@ -45,4 +45,5 @@ inline void add_equation(LinearEquation* eq, float rhs, std::initializer_list<Li
 // Points assumed to be in [0, 1] square.
 // returns resolution * resolution distances on success, empty vector on fail.
 // The first distances is at the points [0,0], the last at [1, 1].
-std::vector<float> generate_sdf(size_t resolution, const std::vector<Point>& points, const Strengths& strengths);
+std::vector<float> generate_sdf(size_t resolution, const std::vector<Point>& points,
+    const Strengths& strengths, bool double_precision);
