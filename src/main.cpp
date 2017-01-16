@@ -19,8 +19,11 @@
 #include <loguru.hpp>
 
 #include "sdf.hpp"
+#include "sparse_linear.hpp"
 
 using namespace emilib::math;
+
+using Vec2 = ImVec2;
 
 struct RGBA
 {
@@ -118,24 +121,27 @@ float area(const std::vector<Shape>& shapes)
 
 std::vector<float> generate_sdf(const std::vector<Point>& points, const Options& options)
 {
-	const auto width = options.resolution;
-	const auto height = options.resolution;
+	const int width = options.resolution;
+	const int height = options.resolution;
 
-	LinearEquation eq;
-	add_model_constraints(&eq, width, height, options.strengths);
+	std::vector<Vec2> positions;
+	std::vector<Vec2> normals;
 
-	// Data constraints:
 	for (const auto& point : points) {
-		const float pos[2]    = {point.x,  point.y};
-		const float normal[2] = {point.dx, point.dy};
-		add_point_constraint(&eq, width, height, options.strengths, pos, normal);
+		positions.emplace_back(point.x, point.y);
+		normals.emplace_back(point.dx, point.dy);
 	}
 
-	LOG_F(INFO, "%lu equations", eq.rhs.size());
-	LOG_F(INFO, "%lu values in matrix", eq.triplets.size());
+	const int sizes[2] = {width, height};
+	static_assert(sizeof(Vec2) == 2 * sizeof(float), "Pack");
+    const auto field = sdf_from_points(
+        2, sizes, options.strengths, points.size(), &positions[0].x, &normals[0].x, nullptr);
+
+	LOG_F(INFO, "%lu equations", field.eq.rhs.size());
+	LOG_F(INFO, "%lu values in matrix", field.eq.triplets.size());
 
 	const size_t num_unknowns = width * height;
-	auto sdf = solve_sparse_linear(num_unknowns, eq.triplets, eq.rhs, options.double_precision);
+	auto sdf = solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs, options.double_precision);
 	if (sdf.size() != num_unknowns) {
 		LOG_F(ERROR, "Failed to find a solution");
 		sdf.resize(num_unknowns, 0.0f);
@@ -228,13 +234,13 @@ bool showStrengths(Strengths* strengths)
 	bool changed = false;
 
 	ImGui::Text("How much we trust the data:");
-	changed |= ImGui::SliderFloat("data_pos",    &strengths->data_pos,    0, 10, "%.4f", 4);
-	changed |= ImGui::SliderFloat("data_normal", &strengths->data_normal, 0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("data_pos",      &strengths->data_pos,      0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("data_gradient", &strengths->data_gradient, 0, 10, "%.4f", 4);
 	ImGui::Text("How much we trust the model:");
-	changed |= ImGui::SliderFloat("model_0",     &strengths->model_0,     0, 10, "%.4f", 4);
-	changed |= ImGui::SliderFloat("model_1",     &strengths->model_1,     0, 10, "%.4f", 4);
-	changed |= ImGui::SliderFloat("model_2",     &strengths->model_2,     0, 10, "%.4f", 4);
-	changed |= ImGui::SliderFloat("model_3",     &strengths->model_3,     0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("model_0",       &strengths->model_0,       0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("model_1",       &strengths->model_1,       0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("model_2",       &strengths->model_2,       0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("model_3",       &strengths->model_3,       0, 10, "%.4f", 4);
 
 	return changed;
 }
