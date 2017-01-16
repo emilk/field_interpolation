@@ -195,12 +195,12 @@ void add_field_constraints(
 }
 
 LatticeField sdf_from_points(
-    const std::vector<int>& sizes,
-    const Strengths&        strengths,
-    const int               num_points,
-    const float             positions[],
-    const float*            normals,
-    const float*            point_weights)
+	const std::vector<int>& sizes,
+	const Strengths&        strengths,
+	const int               num_points,
+	const float             positions[],
+	const float*            normals,
+	const float*            point_weights)
 {
 	CHECK_NOTNULL_F(positions);
 

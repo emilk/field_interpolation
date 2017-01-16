@@ -36,6 +36,7 @@ struct Shape
 {
 	bool   inverted     = false;
 	size_t num_points   = 64;
+	float  lopsidedness[2] =  {1.0f, 1.0f};
 
 	float  center       =  0.5f;
 	float  radius       =  0.35f;
@@ -79,6 +80,29 @@ struct Result
 	double             duration_seconds;
 };
 
+using Dualf = emilib::Dual<float>;
+
+/// t = [0, 1] along perimeter
+auto shape_point(const Shape& shape, Dualf t)
+{
+	Dualf angle = t * TAUf;
+	Dualf square_rad_factor = Dualf(1.0f) / std::max(std::abs(std::cos(angle)), std::abs(std::sin(angle)));
+	Dualf radius = shape.radius * lerp(Dualf(1), square_rad_factor, shape.squareness);
+
+	angle.real += shape.angle_offset;
+
+	Dualf x = shape.center + radius * std::cos(angle);
+	Dualf y = shape.center + radius * std::sin(angle);
+
+	float dx = x.eps;
+	float dy = y.eps;
+	float normal_norm = std::hypot(dx, dy);
+	dx /= normal_norm;
+	dy /= normal_norm;
+
+	return std::make_pair(Vec2(x.real, y.real), Vec2(dy, -dx));
+}
+
 void generate_points(
 	Vec2List*    out_positions,
 	Vec2List*    out_normals,
@@ -87,32 +111,26 @@ void generate_points(
 {
 	CHECK_NOTNULL_F(out_positions);
 	float sign = shape.inverted ? -1 : +1;
-
-	using Dualf = emilib::Dual<float>;
-
 	size_t num_points = std::max(shape.num_points, min_points);
 
-	for (size_t i = 0; i < num_points; ++i)
-	{
-		Dualf angle = sign * Dualf(i * float(M_PI) * 2 / num_points, 1);
-		Dualf square_rad_factor = Dualf(1.0f) / std::max(std::abs(std::cos(angle)), std::abs(std::sin(angle)));
-		Dualf radius = shape.radius * lerp(Dualf(1), square_rad_factor, shape.squareness);
+	auto add_point_at = [&](float t) {
+		Vec2 pos, normal;
+		std::tie(pos, normal) = shape_point(shape, sign * Dualf(t, 1.0f));
 
-		angle.real += shape.angle_offset;
-
-		Dualf x = shape.center + radius * std::cos(angle);
-		Dualf y = shape.center + radius * std::sin(angle);
-
-		float dx = x.eps;
-		float dy = y.eps;
-		float normal_norm = std::hypot(dx, dy);
-		dx /= normal_norm;
-		dy /= normal_norm;
-
-		out_positions->emplace_back(x.real, y.real);
+		out_positions->emplace_back(pos);
 		if (out_normals) {
-			out_normals->emplace_back(dy, -dx);
+			out_normals->emplace_back(normal);
 		}
+	};
+
+	int num_points_in_first_half = std::round(shape.lopsidedness[0] * num_points / 2);
+	for (size_t i = 0; i < num_points_in_first_half; ++i) {
+		add_point_at(0.5f * float(i) / num_points_in_first_half);
+	}
+
+	int num_points_in_second_half = std::round(shape.lopsidedness[1] * num_points / 2);
+	for (size_t i = 0; i < num_points_in_second_half; ++i) {
+		add_point_at(0.5f + 0.5f * i / num_points_in_second_half);
 	}
 }
 
@@ -232,15 +250,15 @@ bool showshapeOption(Shape* shape)
 {
 	bool changed = false;
 
-	ImGui::Text("Shape:");
-	changed |= ImGui::Checkbox("inverted (hole)", &shape->inverted);
-	changed |= ImGuiPP::SliderSize("num_points",  &shape->num_points,    1, 1024, 2);
-	changed |= ImGui::SliderFloat("center",       &shape->center,        0,    1);
-	changed |= ImGui::SliderFloat("radius",       &shape->radius,        0,    1);
-	changed |= ImGui::SliderFloat("squareness",   &shape->squareness,   -2,       3);
-	changed |= ImGui::SliderAngle("angle_offset", &shape->angle_offset,  0,  360);
-
-	return changed;
+    ImGui::Text("Shape:");
+    changed |= ImGui::Checkbox("inverted (hole)",  &shape->inverted);
+    changed |= ImGuiPP::SliderSize("num_points",   &shape->num_points,    1, 1024, 2);
+    changed |= ImGui::SliderFloat("center",        &shape->center,        0,    1);
+    changed |= ImGui::SliderFloat("radius",        &shape->radius,        0,    1);
+    changed |= ImGui::SliderFloat("squareness",    &shape->squareness,   -2,    3);
+    changed |= ImGui::SliderAngle("angle_offset",  &shape->angle_offset,  0,  360);
+    changed |= ImGui::SliderFloat2("lopsidedness", shape->lopsidedness,   0,    2);
+    return changed;
 }
 
 bool showStrengths(Strengths* strengths)

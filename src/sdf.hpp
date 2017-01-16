@@ -49,8 +49,8 @@ struct Strengths
 	float data_pos      = 1.00f; // How much we trust the point positions
 	float data_gradient = 1.00f; // How much we trust the point normals
 	float model_0       = 0.00f; // How much we believe the field to be zero (regularization).
-	float model_1       = 0.50f; // How much we believe the field to be uniform.
-	float model_2       = 0.50f; // How much we believe the field to be smooth.
+	float model_1       = 0.01f; // How much we believe the field to be uniform.
+	float model_2       = 0.25f; // How much we believe the field to be smooth.
 	float model_3       = 0.00f; // Another order of smoothness.
 };
 
@@ -72,7 +72,7 @@ struct LatticeField
 	LinearEquation   eq;
 	std::vector<int> sizes;
 
-	LatticeField() {}
+	LatticeField() = default;
 	explicit LatticeField(const std::vector<int>& sizes_arg) : sizes(sizes_arg) { }
 };
 
@@ -104,9 +104,9 @@ bool add_gradient_constraint(
 
 /// Helper function for generating a signed distance field:
 LatticeField sdf_from_points(
-    const std::vector<int>& sizes,          // Lattice size: one for each dimension
-    const Strengths&        strengths,
-    const int               num_points,
-    const float             positions[],    // Interleaved coordinates, e.g. xyxyxy...
-    const float*            normals,        // Optional (may be null).
-    const float*            point_weights); // Optional (may be null).
+	const std::vector<int>& sizes,          // Lattice size: one for each dimension
+	const Strengths&        strengths,
+	const int               num_points,
+	const float             positions[],    // Interleaved coordinates, e.g. xyxyxy...
+	const float*            normals,        // Optional (may be null).
+	const float*            point_weights); // Optional (may be null).
