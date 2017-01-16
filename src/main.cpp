@@ -15,6 +15,7 @@
 #include <emilib/marching_squares.hpp>
 #include <emilib/math.hpp>
 #include <emilib/tga.hpp>
+#include <emilib/timer.hpp>
 #include <loguru.hpp>
 
 #include "sdf.hpp"
@@ -61,6 +62,11 @@ struct Options
 	}
 };
 
+struct Point
+{
+	float x, y, dx ,dy;
+};
+
 struct Result
 {
 	std::vector<Point> points;
@@ -68,6 +74,7 @@ struct Result
 	std::vector<RGBA>  sdf_image;
 	std::vector<RGBA>  blob_image;
 	float              blob_area;
+	double             duration_seconds;
 };
 
 void generate_points(std::vector<Point>* out_points, const Shape& shape)
@@ -109,10 +116,38 @@ float area(const std::vector<Shape>& shapes)
 	return expected_area;
 }
 
+std::vector<float> generate_sdf(const std::vector<Point>& points, const Options& options)
+{
+	const auto width = options.resolution;
+	const auto height = options.resolution;
+
+	LinearEquation eq;
+	add_model_constraints(&eq, width, height, options.strengths);
+
+	// Data constraints:
+	for (const auto& point : points) {
+		const float pos[2]    = {point.x,  point.y};
+		const float normal[2] = {point.dx, point.dy};
+		add_point_constraint(&eq, width, height, options.strengths, pos, normal);
+	}
+
+	LOG_F(INFO, "%lu equations", eq.rhs.size());
+	LOG_F(INFO, "%lu values in matrix", eq.triplets.size());
+
+	const size_t num_unknowns = width * height;
+	auto sdf = solve_sparse_linear(num_unknowns, eq.triplets, eq.rhs, options.double_precision);
+	if (sdf.size() != num_unknowns) {
+		LOG_F(ERROR, "Failed to find a solution");
+		sdf.resize(num_unknowns, 0.0f);
+	}
+	return sdf;
+}
+
 Result generate(const Options& options)
 {
 	ERROR_CONTEXT("resolution", options.resolution);
 
+	emilib::Timer timer;
 	std::default_random_engine rng(options.seed);
 	const int resolution = options.resolution;
 
@@ -142,15 +177,11 @@ Result generate(const Options& options)
 		points_on_lattice.push_back(on_lattice);
 	}
 
-	result.sdf = generate_sdf(options.resolution, points_on_lattice, options.strengths, options.double_precision);
-	if (result.sdf.size() != resolution * resolution) {
-		LOG_F(ERROR, "Failed to find a solution");
-		result.sdf.resize(resolution * resolution, 0.0f);
-	}
+	result.sdf = generate_sdf(points_on_lattice, options);
 
 	double area_pixels = 0;
 
-	float max_abs_dist = 1;
+	float max_abs_dist = 1e-6f;
 	for (const float dist : result.sdf) {
 		max_abs_dist = std::max(max_abs_dist, std::abs(dist));
 	}
@@ -173,6 +204,7 @@ Result generate(const Options& options)
 
 	result.blob_area = area_pixels / sqr(resolution - 1);
 
+	result.duration_seconds = timer.secs();
 	return result;
 }
 
@@ -202,6 +234,7 @@ bool showStrengths(Strengths* strengths)
 	changed |= ImGui::SliderFloat("model_0",     &strengths->model_0,     0, 10, "%.4f", 4);
 	changed |= ImGui::SliderFloat("model_1",     &strengths->model_1,     0, 10, "%.4f", 4);
 	changed |= ImGui::SliderFloat("model_2",     &strengths->model_2,     0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("model_3",     &strengths->model_3,     0, 10, "%.4f", 4);
 
 	return changed;
 }
@@ -380,6 +413,7 @@ int main(int argc, char* argv[])
 			const auto lines = emilib::marching_squares(options.resolution, options.resolution, result.sdf.data());
 			const float lines_area = emilib::calc_area(lines.size() / 4, lines.data()) / sqr(options.resolution - 1);
 
+			ImGui::Text("Calculated in %.3f s", result.duration_seconds);
 			ImGui::Text("Model area: %.3f, marching squares area: %.3f, sdf blob area: %.3f",
 				area(options.shapes), lines_area, result.blob_area);
 
