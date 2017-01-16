@@ -25,13 +25,13 @@ void add_equation(LinearEquation* eq, float rhs, std::initializer_list<LinearEqu
 /// Computed coefficients for multi-dimensional linear interpolation of 2^D neighbors.
 /// Returns false iff this is too close to, or outside of, a border.
 bool multilerp(
-	int         out_index[],
-	float       out_weight[],
-	int         num_dim,
-	const int   sizes[],
-	const float in_pos[],
-	int         extra_bound)
+	int                     out_index[],
+	float                   out_weight[],
+	const std::vector<int>& sizes,
+	const float             in_pos[],
+	int                     extra_bound)
 {
+	int num_dim = sizes.size();
 	CHECK_F(1 <= num_dim && num_dim <= MAX_DIM);
 	int floored[MAX_DIM];
 	float t[MAX_DIM];
@@ -71,11 +71,11 @@ bool add_value_constraint(
 {
 	int indices[TWO_TO_MAX_DIM];
 	float weights[TWO_TO_MAX_DIM];
-	if (!multilerp(indices, weights, field->num_dim, field->sizes, pos, 0)) {
+	if (!multilerp(indices, weights, field->sizes, pos, 0)) {
 		return false;
 	}
 
-	for (size_t i = 0; i < (1 << field->num_dim); ++i) {
+	for (size_t i = 0; i < (1 << field->sizes.size()); ++i) {
 		add_equation(&field->eq, value * strength, {
 			{indices[i], weights[i] * strength},
 		});
@@ -101,20 +101,22 @@ bool add_gradient_constraint(
 		(x[4] - x[3] = dx) * 0.7
 	*/
 
+	int num_dim = field->sizes.size();
+
 	float adjusted_pos[MAX_DIM];
-	for (int d = 0; d < field->num_dim; ++d) {
+	for (int d = 0; d < num_dim; ++d) {
 		adjusted_pos[d] = pos[d] - 0.5f;
 	}
 
 	int indices[TWO_TO_MAX_DIM];
 	float weights[TWO_TO_MAX_DIM];
-	if (!multilerp(indices, weights, field->num_dim, field->sizes, adjusted_pos, 1)) {
+	if (!multilerp(indices, weights, field->sizes, adjusted_pos, 1)) {
 		return false;
 	}
 
-	for (size_t i = 0; i < (1 << field->num_dim); ++i) {
+	for (size_t i = 0; i < (1 << num_dim); ++i) {
 		int stride = 1;
-		for (int d = 0; d < field->num_dim; ++d) {
+		for (int d = 0; d < num_dim; ++d) {
 			// d f(x, y) / dx = gradient[0]
 			// d f(x, y) / dy = gradient[1]
 			// ...
@@ -147,8 +149,8 @@ void add_model_constraint(
 	if (0 <= dim_cord && dim_cord + 1 < dim_size) {
 		// f′(x) = 0   ⇔   f(x) = f(x + 1)
 		add_equation(&field->eq, 0.0f, {
-			{index + 0,      +strengths.model_1},
-			{index + stride, +strengths.model_1},
+			{index + 0,      -1 * strengths.model_1},
+			{index + stride, +1 * strengths.model_1},
 		});
 	}
 
@@ -177,33 +179,33 @@ void add_field_constraints(
 	const Strengths& strengths)
 {
 	int num_unknowns = 1;
-	for (int d = 0; d < field->num_dim; ++d) {
-		num_unknowns *= field->sizes[d];
+	for (auto dimension_size : field->sizes) {
+		num_unknowns *= dimension_size;
 	}
 	for (int index = 0; index < num_unknowns; ++index) {
 		int stride = 1;
 		int coordinate = index;
-		for (int d = 0; d < field->num_dim; ++d) {
-			int dim_cord = coordinate % field->sizes[d];
-			add_model_constraint(field, strengths, index, dim_cord, field->sizes[d], stride);
-			coordinate /= field->sizes[d];
-			stride *= field->sizes[d];
+		for (auto dimension_size : field->sizes) {
+			int dim_cord = coordinate % dimension_size;
+			add_model_constraint(field, strengths, index, dim_cord, dimension_size, stride);
+			coordinate /= dimension_size;
+			stride *= dimension_size;
 		}
 	}
 }
 
 LatticeField sdf_from_points(
-    int              num_dim,
-    const int        sizes[],
-    const Strengths& strengths,
-    int              num_points,
-    const float      positions[],
-    const float*     normals,
-    const float*     point_weights)
+    const std::vector<int>& sizes,
+    const Strengths&        strengths,
+    const int               num_points,
+    const float             positions[],
+    const float*            normals,
+    const float*            point_weights)
 {
 	CHECK_NOTNULL_F(positions);
 
-	LatticeField field(num_dim, sizes);
+	int num_dim = sizes.size();
+	LatticeField field{sizes};
 
 	add_field_constraints(&field, strengths);
 	for (int i = 0; i < num_points; ++i) {

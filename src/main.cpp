@@ -25,6 +25,8 @@ using namespace emilib::math;
 
 using Vec2 = ImVec2;
 
+using Vec2List = std::vector<Vec2>;
+
 struct RGBA
 {
 	uint8_t r, g, b, a;
@@ -65,14 +67,11 @@ struct Options
 	}
 };
 
-struct Point
-{
-	float x, y, dx ,dy;
-};
-
 struct Result
 {
-	std::vector<Point> points;
+	Vec2List           point_positions;
+	Vec2List           point_normals;
+	LatticeField       field;
 	std::vector<float> sdf;
 	std::vector<RGBA>  sdf_image;
 	std::vector<RGBA>  blob_image;
@@ -80,16 +79,22 @@ struct Result
 	double             duration_seconds;
 };
 
-void generate_points(std::vector<Point>* out_points, const Shape& shape)
+void generate_points(
+	Vec2List*    out_positions,
+	Vec2List*    out_normals,
+	const Shape& shape,
+	size_t       min_points)
 {
-	CHECK_NOTNULL_F(out_points);
+	CHECK_NOTNULL_F(out_positions);
 	float sign = shape.inverted ? -1 : +1;
 
 	using Dualf = emilib::Dual<float>;
 
-	for (size_t i = 0; i < shape.num_points; ++i)
+	size_t num_points = std::max(shape.num_points, min_points);
+
+	for (size_t i = 0; i < num_points; ++i)
 	{
-		Dualf angle = sign * Dualf(i * float(M_PI) * 2 / shape.num_points, 1);
+		Dualf angle = sign * Dualf(i * float(M_PI) * 2 / num_points, 1);
 		Dualf square_rad_factor = Dualf(1.0f) / std::max(std::abs(std::cos(angle)), std::abs(std::sin(angle)));
 		Dualf radius = shape.radius * lerp(Dualf(1), square_rad_factor, shape.squareness);
 
@@ -104,7 +109,10 @@ void generate_points(std::vector<Point>* out_points, const Shape& shape)
 		dx /= normal_norm;
 		dy /= normal_norm;
 
-		out_points->push_back(Point{x.real, y.real, dy, -dx});
+		out_positions->emplace_back(x.real, y.real);
+		if (out_normals) {
+			out_normals->emplace_back(dy, -dx);
+		}
 	}
 }
 
@@ -113,32 +121,31 @@ float area(const std::vector<Shape>& shapes)
 	// TODO: calculate by oversampling + using calc_area in marching_cubes.hpp
 	double expected_area = 0;
 	for (const auto& shape : shapes) {
-		float sign = shape.inverted ? -1 : +1;
-		expected_area += sign * M_PI * std::pow(shape.radius, 2);
+		Vec2List positions;
+		generate_points(&positions, nullptr, shape, 2048);
+
+		std::vector<float> line_segments;
+		for (const auto i : emilib::indices(positions)) {
+			line_segments.push_back(positions[i].x);
+			line_segments.push_back(positions[i].y);
+			line_segments.push_back(positions[(i + 1) % positions.size()].x);
+			line_segments.push_back(positions[(i + 1) % positions.size()].y);
+		}
+		expected_area += emilib::calc_area(line_segments.size() / 4, line_segments.data());
 	}
 	return expected_area;
 }
 
-std::vector<float> generate_sdf(const std::vector<Point>& points, const Options& options)
+auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Options& options)
 {
+	CHECK_EQ_F(positions.size(), normals.size());
+
 	const int width = options.resolution;
 	const int height = options.resolution;
 
-	std::vector<Vec2> positions;
-	std::vector<Vec2> normals;
-
-	for (const auto& point : points) {
-		positions.emplace_back(point.x, point.y);
-		normals.emplace_back(point.dx, point.dy);
-	}
-
-	const int sizes[2] = {width, height};
 	static_assert(sizeof(Vec2) == 2 * sizeof(float), "Pack");
-    const auto field = sdf_from_points(
-        2, sizes, options.strengths, points.size(), &positions[0].x, &normals[0].x, nullptr);
-
-	LOG_F(INFO, "%lu equations", field.eq.rhs.size());
-	LOG_F(INFO, "%lu values in matrix", field.eq.triplets.size());
+	const auto field = sdf_from_points(
+		{width, height}, options.strengths, positions.size(), &positions[0].x, &normals[0].x, nullptr);
 
 	const size_t num_unknowns = width * height;
 	auto sdf = solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs, options.double_precision);
@@ -146,7 +153,25 @@ std::vector<float> generate_sdf(const std::vector<Point>& points, const Options&
 		LOG_F(ERROR, "Failed to find a solution");
 		sdf.resize(num_unknowns, 0.0f);
 	}
-	return sdf;
+	return std::make_tuple(field, sdf);
+}
+
+void perturb_points(Vec2List* positions, Vec2List* normals, const Options& options)
+{
+	std::default_random_engine rng(options.seed);
+	std::normal_distribution<float> pos_noise(0.0, options.pos_noise);
+	std::normal_distribution<float> dir_noise(0.0, options.dir_noise);
+
+	for (auto& pos : *positions) {
+		pos.x += pos_noise(rng);
+		pos.y += pos_noise(rng);
+	}
+	for (auto& normal : *normals) {
+		float angle = std::atan2(normal.y, normal.x);
+		angle += dir_noise(rng);
+		normal.x += std::cos(angle);
+		normal.y += std::sin(angle);
+	}
 }
 
 Result generate(const Options& options)
@@ -154,36 +179,25 @@ Result generate(const Options& options)
 	ERROR_CONTEXT("resolution", options.resolution);
 
 	emilib::Timer timer;
-	std::default_random_engine rng(options.seed);
 	const int resolution = options.resolution;
 
 	Result result;
 
 	for (const auto& shape : options.shapes) {
-		generate_points(&result.points, shape);
+		generate_points(&result.point_positions, &result.point_normals, shape, 0);
 	}
+	perturb_points(&result.point_positions, &result.point_normals, options);
 
-	std::normal_distribution<float> pos_noise(0.0, options.pos_noise);
-	std::normal_distribution<float> dir_noise(0.0, options.dir_noise);
+	Vec2List lattice_positions;
 
-	std::vector<Point> points_on_lattice;
-	points_on_lattice.reserve(result.points.size());
-
-	for (auto& point : result.points) {
-		point.x += pos_noise(rng);
-		point.y += pos_noise(rng);
-		float angle = std::atan2(point.dy, point.dx);
-		angle += dir_noise(rng);
-		point.dx += std::cos(angle);
-		point.dy += std::sin(angle);
-
-		Point on_lattice = point;
+	for (const auto& pos : result.point_positions) {
+		Vec2 on_lattice = pos;
 		on_lattice.x *= (resolution - 1.0f);
 		on_lattice.y *= (resolution - 1.0f);
-		points_on_lattice.push_back(on_lattice);
+		lattice_positions.push_back(on_lattice);
 	}
 
-	result.sdf = generate_sdf(points_on_lattice, options);
+	std::tie(result.field, result.sdf) = generate_sdf(lattice_positions, result.point_normals, options);
 
 	double area_pixels = 0;
 
@@ -323,17 +337,20 @@ void show_cells(const Options& options, ImVec2 canvas_pos, ImVec2 canvas_size)
 	}
 }
 
-void show_points(const Options& options, const std::vector<Point>& points, ImVec2 canvas_pos, ImVec2 canvas_size)
+void show_points(const Options& options, const Vec2List& positions, const Vec2List& normals,
+	ImVec2 canvas_pos, ImVec2 canvas_size)
 {
+	CHECK_EQ_F(positions.size(), normals.size());
+
 	ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-	for (const auto& point : points) {
+	for (const auto pi : emilib::indices(positions)) {
 		ImVec2 center;
-		center.x = canvas_pos.x + canvas_size.x * point.x;
-		center.y = canvas_pos.y + canvas_size.y * point.y;
+		center.x = canvas_pos.x + canvas_size.x * positions[pi].x;
+		center.y = canvas_pos.y + canvas_size.y * positions[pi].y;
 		draw_list->AddCircleFilled(center, 1, ImColor(1.0f, 1.0f, 1.0f, 1.0f));
 		const float arrow_len = 5;
-		draw_list->AddLine(center, ImVec2{center.x + arrow_len * point.dx, center.y + arrow_len * point.dy}, ImColor(1.0f, 1.0f, 1.0f, 0.75f));
+		draw_list->AddLine(center, ImVec2{center.x + arrow_len * normals[pi].x, center.y + arrow_len * normals[pi].y}, ImColor(1.0f, 1.0f, 1.0f, 0.75f));
 	}
 }
 
@@ -419,6 +436,8 @@ int main(int argc, char* argv[])
 			const auto lines = emilib::marching_squares(options.resolution, options.resolution, result.sdf.data());
 			const float lines_area = emilib::calc_area(lines.size() / 4, lines.data()) / sqr(options.resolution - 1);
 
+			ImGui::Text("%lu equations", result.field.eq.rhs.size());
+			ImGui::Text("%lu values in matrix", result.field.eq.triplets.size());
 			ImGui::Text("Calculated in %.3f s", result.duration_seconds);
 			ImGui::Text("Model area: %.3f, marching squares area: %.3f, sdf blob area: %.3f",
 				area(options.shapes), lines_area, result.blob_area);
@@ -431,8 +450,8 @@ int main(int argc, char* argv[])
 			ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
 			ImGui::InvisibleButton("canvas", canvas_size);
 			show_cells(options, canvas_pos, canvas_size);
-			if (draw_points) { show_points(options,          result.points, canvas_pos, canvas_size); }
-			if (draw_blob)   { show_blob(options.resolution, lines,         canvas_pos, canvas_size); }
+			if (draw_points) { show_points(options, result.point_positions, result.point_normals, canvas_pos, canvas_size); }
+			if (draw_blob) { show_blob(options.resolution, lines, canvas_pos, canvas_size); }
 
 			ImGui::Image(reinterpret_cast<ImTextureID>(sdf_texture.id()), canvas_size);
 			ImGui::SameLine();

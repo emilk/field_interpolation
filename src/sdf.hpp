@@ -27,7 +27,7 @@ In particular: 1D, 2D, 3D.
 
 Example use cases:
 	* Fit a smooth curve to some data
-	* Generate a signed distance field from a set of surface points
+	* Generate a signed distance field (sdf) from a set of surface points
 
 The lattice coordinates go from [0, 0, ...] to [width - 1, height - 1, ...] (inclusive).
 */
@@ -39,13 +39,18 @@ The lattice coordinates go from [0, 0, ...] to [width - 1, height - 1, ...] (inc
 /// with nearest-neighbor instead, if your dimensionality is high.
 const int MAX_DIM = 4;
 
+/// A note about picking good parameters:
+/// If your model is continuous but with abrupt changes, use a high model_1 and low everything else.
+/// If your model is smooth, use a high model_2 and low everything else.
+/// If your data is trustworthy, you should lower the model weights (e.g. 1/10th of the data weights).
+/// If your data is noisy, you should use higher model weights.
 struct Strengths
 {
 	float data_pos      = 1.00f; // How much we trust the point positions
 	float data_gradient = 1.00f; // How much we trust the point normals
-	float model_0       = 0.00f; // How much we believe the SDF to be zero (regularization).
-	float model_1       = 0.00f; // How much we believe the SDF to be uniform.
-	float model_2       = 1.00f; // How much we believe the SDF to be smooth.
+	float model_0       = 0.00f; // How much we believe the field to be zero (regularization).
+	float model_1       = 0.50f; // How much we believe the field to be uniform.
+	float model_2       = 0.50f; // How much we believe the field to be smooth.
 	float model_3       = 0.00f; // Another order of smoothness.
 };
 
@@ -64,17 +69,11 @@ struct LinearEquationPair
 
 struct LatticeField
 {
-	LinearEquation eq;
-	int            num_dim;
-	int            sizes[MAX_DIM];
+	LinearEquation   eq;
+	std::vector<int> sizes;
 
-	LatticeField(int num_dim_arg, const int sizes_arg[])
-	{
-		num_dim = num_dim_arg;
-		for (int d = 0; d < num_dim; ++d) {
-			sizes[d] = sizes_arg[d];
-		}
-	}
+	LatticeField() {}
+	explicit LatticeField(const std::vector<int>& sizes_arg) : sizes(sizes_arg) { }
 };
 
 /// Helper to add a row to the linear equation.
@@ -105,10 +104,9 @@ bool add_gradient_constraint(
 
 /// Helper function for generating a signed distance field:
 LatticeField sdf_from_points(
-    int              num_dim,
-    const int        sizes[],
-    const Strengths& strengths,
-    int              num_points,
-    const float      positions[], // Interleaved coordinates, e.g. xyxyxy...
-    const float*     normals,       // Optional (may be null).
-    const float*     point_weights); // Optional (may be null).
+    const std::vector<int>& sizes,          // Lattice size: one for each dimension
+    const Strengths&        strengths,
+    const int               num_points,
+    const float             positions[],    // Interleaved coordinates, e.g. xyxyxy...
+    const float*            normals,        // Optional (may be null).
+    const float*            point_weights); // Optional (may be null).
