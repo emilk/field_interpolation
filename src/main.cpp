@@ -4,6 +4,7 @@
 #include <imgui/imgui.h>
 #include <SDL2/SDL.h>
 
+#include <emilib/dual.hpp>
 #include <emilib/gl_lib.hpp>
 #include <emilib/gl_lib_opengl.hpp>
 #include <emilib/gl_lib_sdl.hpp>
@@ -12,45 +13,50 @@
 #include <emilib/imgui_sdl.hpp>
 #include <emilib/irange.hpp>
 #include <emilib/marching_squares.hpp>
+#include <emilib/math.hpp>
 #include <emilib/tga.hpp>
 #include <loguru.hpp>
 
 #include "sdf.hpp"
+
+using namespace emilib::math;
 
 struct RGBA
 {
 	uint8_t r, g, b, a;
 };
 
-struct Circle
+struct Shape
 {
-	bool   inverted   = false;
-	size_t num_points = 64;
+	bool   inverted     = false;
+	size_t num_points   = 64;
 
-	float  center     =  0.5f;
-	float  radius     =  0.35f;
+	float  center       =  0.5f;
+	float  radius       =  0.35f;
 
-	float angle_offset = 0;
+	float  squareness   =  0;
+
+	float  angle_offset =  0;
 };
 
 struct Options
 {
-	int                 seed             =  0;
-	size_t              resolution       = 16;
-	std::vector<Circle> features;
-	float               pos_noise        =  0.005f;
-	float               dir_noise        =  0.05f;
-	Strengths           strengths;
-	bool                double_precision = true;
+	int                seed             =  0;
+	size_t             resolution       = 16;
+	std::vector<Shape> shapes;
+	float              pos_noise        =  0.005f;
+	float              dir_noise        =  0.05f;
+	Strengths          strengths;
+	bool               double_precision = true;
 
 	Options()
 	{
-		features.push_back(Circle{});
+		shapes.push_back(Shape{});
 		{
-			Circle c;
+			Shape c;
 			c.inverted = true;
 			c.radius = 0.1;
-			features.push_back(c);
+			shapes.push_back(c);
 		}
 	}
 };
@@ -64,28 +70,41 @@ struct Result
 	float              blob_area;
 };
 
-void generate_points(std::vector<Point>* out_points, const Circle& circle)
+void generate_points(std::vector<Point>* out_points, const Shape& shape)
 {
 	CHECK_NOTNULL_F(out_points);
-	float sign = circle.inverted ? -1 : +1;
+	float sign = shape.inverted ? -1 : +1;
 
-	for (size_t i = 0; i < circle.num_points; ++i)
+	using Dualf = emilib::Dual<float>;
+
+	for (size_t i = 0; i < shape.num_points; ++i)
 	{
-		float angle = circle.angle_offset + i * M_PI * 2 / circle.num_points;
-		float x = circle.center + circle.radius * std::cos(angle);
-		float y = circle.center + circle.radius * std::sin(angle);
-		float dx = sign * std::cos(angle);
-		float dy = sign * std::sin(angle);
-		out_points->push_back(Point{x, y, dx, dy});
+		Dualf angle = sign * Dualf(i * float(M_PI) * 2 / shape.num_points, 1);
+		Dualf square_rad_factor = Dualf(1.0f) / std::max(std::abs(std::cos(angle)), std::abs(std::sin(angle)));
+		Dualf radius = shape.radius * lerp(Dualf(1), square_rad_factor, shape.squareness);
+
+		angle.real += shape.angle_offset;
+
+		Dualf x = shape.center + radius * std::cos(angle);
+		Dualf y = shape.center + radius * std::sin(angle);
+
+		float dx = x.eps;
+		float dy = y.eps;
+		float normal_norm = std::hypot(dx, dy);
+		dx /= normal_norm;
+		dy /= normal_norm;
+
+		out_points->push_back(Point{x.real, y.real, dy, -dx});
 	}
 }
 
-float area(const std::vector<Circle>& features)
+float area(const std::vector<Shape>& shapes)
 {
+	// TODO: calculate by oversampling + using calc_area in marching_cubes.hpp
 	double expected_area = 0;
-	for (const auto& circle : features) {
-		float sign = circle.inverted ? -1 : +1;
-		expected_area += sign * M_PI * std::pow(circle.radius, 2);
+	for (const auto& shape : shapes) {
+		float sign = shape.inverted ? -1 : +1;
+		expected_area += sign * M_PI * std::pow(shape.radius, 2);
 	}
 	return expected_area;
 }
@@ -99,8 +118,8 @@ Result generate(const Options& options)
 
 	Result result;
 
-	for (const auto& feature : options.features) {
-		generate_points(&result.points, feature);
+	for (const auto& shape : options.shapes) {
+		generate_points(&result.points, shape);
 	}
 
 	std::normal_distribution<float> pos_noise(0.0, options.pos_noise);
@@ -152,21 +171,22 @@ Result generate(const Options& options)
 		area_pixels += insideness;
 	}
 
-	result.blob_area = area_pixels / (resolution * resolution);
+	result.blob_area = area_pixels / sqr(resolution - 1);
 
 	return result;
 }
 
-bool showFeatureOption(Circle* circle)
+bool showshapeOption(Shape* shape)
 {
 	bool changed = false;
 
-	ImGui::Text("Circle:");
-	changed |= ImGui::Checkbox("inverted (hole)", &circle->inverted);
-	changed |= ImGuiPP::SliderSize("num_points",  &circle->num_points,   1, 1024, 2);
-	changed |= ImGui::SliderFloat("center",       &circle->center,       0,    1);
-	changed |= ImGui::SliderFloat("radius",       &circle->radius,       0,    1);
-	changed |= ImGui::SliderAngle("angle_offset", &circle->angle_offset, 0,  360);
+	ImGui::Text("Shape:");
+	changed |= ImGui::Checkbox("inverted (hole)", &shape->inverted);
+	changed |= ImGuiPP::SliderSize("num_points",  &shape->num_points,    1, 1024, 2);
+	changed |= ImGui::SliderFloat("center",       &shape->center,        0,    1);
+	changed |= ImGui::SliderFloat("radius",       &shape->radius,        0,    1);
+	changed |= ImGui::SliderFloat("squareness",   &shape->squareness,   -2,       3);
+	changed |= ImGui::SliderAngle("angle_offset", &shape->angle_offset,  0,  360);
 
 	return changed;
 }
@@ -197,19 +217,19 @@ bool showOptions(Options* options)
 	changed |= ImGui::SliderInt("seed", &options->seed, 0, 100);
 	changed |= ImGuiPP::SliderSize("resolution", &options->resolution, 4, 256);
 	ImGui::Separator();
-	for (const int i : emilib::indices(options->features)) {
+	for (const int i : emilib::indices(options->shapes)) {
 		ImGui::PushID(i);
-		changed |= showFeatureOption(&options->features[i]);
+		changed |= showshapeOption(&options->shapes[i]);
 		ImGui::PopID();
 		ImGui::Separator();
 	}
-	if (options->features.size() >= 2 && ImGui::Button("Remove feature")) {
-		options->features.pop_back();
+	if (options->shapes.size() >= 2 && ImGui::Button("Remove shape")) {
+		options->shapes.pop_back();
 		changed = true;
 		ImGui::SameLine();
 	}
-	if (ImGui::Button("Add feature")) {
-		options->features.push_back(Circle{});
+	if (ImGui::Button("Add shape")) {
+		options->shapes.push_back(Shape{});
 		changed = true;
 	}
 	ImGui::Separator();
@@ -233,7 +253,7 @@ ImGuiWindowFlags fullscreen_window_flags()
 	return ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar;
 }
 
-void draw_points(const Options& options, const std::vector<Point>& points, ImVec2 canvas_pos, ImVec2 canvas_size)
+void show_cells(const Options& options, ImVec2 canvas_pos, ImVec2 canvas_size)
 {
 	ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
@@ -262,6 +282,11 @@ void draw_points(const Options& options, const std::vector<Point>& points, ImVec
 			}
 		}
 	}
+}
+
+void show_points(const Options& options, const std::vector<Point>& points, ImVec2 canvas_pos, ImVec2 canvas_size)
+{
+	ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
 	for (const auto& point : points) {
 		ImVec2 center;
@@ -273,10 +298,8 @@ void draw_points(const Options& options, const std::vector<Point>& points, ImVec
 	}
 }
 
-void draw_blob(size_t resolution, const float* sdf, ImVec2 canvas_pos, ImVec2 canvas_size)
+void show_blob(size_t resolution, const std::vector<float>& lines, ImVec2 canvas_pos, ImVec2 canvas_size)
 {
-	const auto lines = emilib::marching_squares(resolution, resolution, sdf);
-
 	ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
 	CHECK_F(lines.size() % 4 == 0);
@@ -293,6 +316,16 @@ void draw_blob(size_t resolution, const float* sdf, ImVec2 canvas_pos, ImVec2 ca
 		y1 = canvas_pos.y + canvas_size.y * (y1 / (resolution - 1.0f));
 
 		draw_list->AddLine({x0, y0}, {x1, y1}, ImColor(1.0f, 0.0f, 0.0f, 1.0f));
+#if 1
+		float cx = (x0 + x1) / 2;
+		float cy = (y0 + y1) / 2;
+		float dx = (x1 - x0);
+		float dy = (y1 - y0);
+		float norm = 10 / std::hypot(dx, dy);
+		dx *= norm;
+		dy *= norm;
+		draw_list->AddLine({cx, cy}, {cx + dy, cy - dx}, ImColor(0.0f, 1.0f, 0.0f, 1.0f));
+#endif
 	}
 }
 int main(int argc, char* argv[])
@@ -320,6 +353,9 @@ int main(int argc, char* argv[])
 	sdf_texture.set_data(result.sdf_image.data(),   image_size, gl::ImageFormat::RGBA32);
 	blob_texture.set_data(result.blob_image.data(), image_size, gl::ImageFormat::RGBA32);
 
+	bool draw_points = true;
+	bool draw_blob = true;
+
 	bool quit = false;
 	while (!quit) {
 		SDL_Event event;
@@ -341,13 +377,22 @@ int main(int argc, char* argv[])
 		}
 
 		if (ImGui::Begin("Result")) {
-			ImGui::Text("Model area: %.3f, sdf blob area: %.3f", area(options.features), result.blob_area);
+			const auto lines = emilib::marching_squares(options.resolution, options.resolution, result.sdf.data());
+			const float lines_area = emilib::calc_area(lines.size() / 4, lines.data()) / sqr(options.resolution - 1);
+
+			ImGui::Text("Model area: %.3f, marching squares area: %.3f, sdf blob area: %.3f",
+				area(options.shapes), lines_area, result.blob_area);
+
+			ImGui::Checkbox("Input points", &draw_points);
+			ImGui::SameLine();
+			ImGui::Checkbox("Output blob", &draw_blob);
 
 			ImVec2 canvas_size{384, 384};
 			ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
 			ImGui::InvisibleButton("canvas", canvas_size);
-			draw_points(options, result.points, canvas_pos, canvas_size);
-			draw_blob(options.resolution, result.sdf.data(), canvas_pos, canvas_size);
+			show_cells(options, canvas_pos, canvas_size);
+			if (draw_points) { show_points(options,          result.points, canvas_pos, canvas_size); }
+			if (draw_blob)   { show_blob(options.resolution, lines,         canvas_pos, canvas_size); }
 
 			ImGui::Image(reinterpret_cast<ImTextureID>(sdf_texture.id()), canvas_size);
 			ImGui::SameLine();

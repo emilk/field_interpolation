@@ -1,5 +1,3 @@
-#include <emilib/unity_build.cpp>
-
 #define CONFIGURU_IMPLEMENTATION 1
 #include <configuru.hpp>
 
