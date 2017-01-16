@@ -41,7 +41,8 @@ struct Shape
 	float  center       =  0.5f;
 	float  radius       =  0.35f;
 
-	float  squareness   =  0;
+	float  circleness    = 0;
+	size_t polygon_sides = 3;
 
 	float  angle_offset =  0;
 };
@@ -49,7 +50,7 @@ struct Shape
 struct Options
 {
 	int                seed             =  0;
-	size_t             resolution       = 16;
+	size_t             resolution       = 24;
 	std::vector<Shape> shapes;
 	float              pos_noise        =  0.005f;
 	float              dir_noise        =  0.05f;
@@ -63,6 +64,7 @@ struct Options
 			Shape c;
 			c.inverted = true;
 			c.radius = 0.1;
+			c.circleness = 1;
 			shapes.push_back(c);
 		}
 	}
@@ -82,17 +84,49 @@ struct Result
 
 using Dualf = emilib::Dual<float>;
 
+auto circle_point(const Shape& shape, Dualf t) -> std::pair<Dualf, Dualf>
+{
+	Dualf angle = t * TAUf;
+	return std::make_pair(std::cos(angle), std::sin(angle));
+}
+
+auto poly_point(const Shape& shape, Dualf t) -> std::pair<Dualf, Dualf>
+{
+	CHECK_GE_F(shape.polygon_sides, 3u);
+
+	auto polygon_corner = [&](int corner) {
+		float angle = TAUf * corner / shape.polygon_sides;
+		angle += shape.angle_offset;
+		return Vec2(std::cos(angle), std::sin(angle));
+	};
+
+	int corner_0 = t.real * shape.polygon_sides;
+
+	auto v0 = polygon_corner(corner_0);
+	auto v1 = polygon_corner(corner_0 + 1);
+
+	Dualf side_t = t * float(shape.polygon_sides) - float(corner_0);
+
+	Dualf x = v0.x + side_t * (v1.x - v0.x);
+	Dualf y = v0.y + side_t * (v1.y - v0.y);
+	return std::make_pair(x, y);
+}
+
 /// t = [0, 1] along perimeter
 auto shape_point(const Shape& shape, Dualf t)
 {
-	Dualf angle = t * TAUf;
-	Dualf square_rad_factor = Dualf(1.0f) / std::max(std::abs(std::cos(angle)), std::abs(std::sin(angle)));
-	Dualf radius = shape.radius * lerp(Dualf(1), square_rad_factor, shape.squareness);
+	t += shape.angle_offset / TAUf;
 
-	angle.real += shape.angle_offset;
+	Dualf circle_x, circle_y;
+	Dualf poly_x,   poly_y;
+	std::tie(circle_x, circle_y) = circle_point(shape, t);
+	std::tie(poly_x,   poly_y)   = poly_point(shape,   t);
 
-	Dualf x = shape.center + radius * std::cos(angle);
-	Dualf y = shape.center + radius * std::sin(angle);
+	Dualf x = lerp(poly_x, circle_x, shape.circleness);
+	Dualf y = lerp(poly_y, circle_y, shape.circleness);
+
+	x = shape.center + shape.radius * x;
+	y = shape.center + shape.radius * y;
 
 	float dx = x.eps;
 	float dy = y.eps;
@@ -251,13 +285,14 @@ bool showshapeOption(Shape* shape)
 	bool changed = false;
 
     ImGui::Text("Shape:");
-    changed |= ImGui::Checkbox("inverted (hole)",  &shape->inverted);
-    changed |= ImGuiPP::SliderSize("num_points",   &shape->num_points,    1, 1024, 2);
-    changed |= ImGui::SliderFloat("center",        &shape->center,        0,    1);
-    changed |= ImGui::SliderFloat("radius",        &shape->radius,        0,    1);
-    changed |= ImGui::SliderFloat("squareness",    &shape->squareness,   -2,    3);
-    changed |= ImGui::SliderAngle("angle_offset",  &shape->angle_offset,  0,  360);
-    changed |= ImGui::SliderFloat2("lopsidedness", shape->lopsidedness,   0,    2);
+    changed |= ImGui::Checkbox("inverted (hole)",   &shape->inverted);
+    changed |= ImGuiPP::SliderSize("num_points",    &shape->num_points,    1, 1024, 2);
+    changed |= ImGui::SliderFloat("center",         &shape->center,        0,    1);
+    changed |= ImGui::SliderFloat("radius",         &shape->radius,        0,    1);
+    changed |= ImGui::SliderFloat("circleness",     &shape->circleness,   -2,       3);
+    changed |= ImGuiPP::SliderSize("polygon_sides", &shape->polygon_sides, 3,       8);
+    changed |= ImGui::SliderAngle("angle_offset",   &shape->angle_offset,  0,  360);
+    changed |= ImGui::SliderFloat2("lopsidedness",  shape->lopsidedness,   0,       2);
     return changed;
 }
 

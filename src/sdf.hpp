@@ -49,8 +49,8 @@ struct Strengths
 	float data_pos      = 1.00f; // How much we trust the point positions
 	float data_gradient = 1.00f; // How much we trust the point normals
 	float model_0       = 0.00f; // How much we believe the field to be zero (regularization).
-	float model_1       = 0.01f; // How much we believe the field to be uniform.
-	float model_2       = 0.25f; // How much we believe the field to be smooth.
+	float model_1       = 0.05f; // How much we believe the field to be uniform.
+	float model_2       = 0.50f; // How much we believe the field to be smooth.
 	float model_3       = 0.00f; // Another order of smoothness.
 };
 
