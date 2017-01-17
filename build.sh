@@ -11,12 +11,22 @@ fi
 mkdir -p build
 
 CXX=g++
-CPPFLAGS="--std=c++14 -stdlib=libc++ -Wall -Wpedantic -Wno-gnu-zero-variadic-macro-arguments -g -DNDEBUG"
+CPPFLAGS="--std=c++14 -Wall -Wpedantic -Wno-gnu-zero-variadic-macro-arguments -g -DNDEBUG"
 CPPFLAGS="$CPPFLAGS -O2"
-COMPILE_FLAGS="$CPPFLAGS -I libs -I libs/emilib -I /opt/local/include/eigen3"
+COMPILE_FLAGS="$CPPFLAGS -I libs -I libs/emilib"
 LDLIBS="-lstdc++ -lpthread -ldl"
-LDLIBS="$LDLIBS -lsdl2 -lglew -framework OpenGL"
+LDLIBS="$LDLIBS -lSDL2 -lGLEW"
 # LDLIBS="$LDLIBS -ljemalloc"
+
+# Platform specific flags:
+if [ "$(uname)" == "Darwin" ]; then
+	COMPILE_FLAGS="$COMPILE_FLAGS -I /opt/local/include/eigen3"
+	LDLIBS="$LDLIBS -framework OpenGL"
+else
+	COMPILE_FLAGS="$COMPILE_FLAGS -I /usr/include/eigen3"
+	LDLIBS="$LDLIBS -lGL -lkqueue"
+fi
+
 OBJECTS=""
 
 for source_path in src/*.cpp; do
