@@ -46,6 +46,13 @@ const int MAX_DIM = 4;
 /// If your model is smooth, use a high model_2 and low everything else.
 /// If your data is trustworthy, you should lower the model weights (e.g. 1/10th of the data weights).
 /// If your data is noisy, you should use higher model weights.
+/// Note that if you increase the resolution of your lattice, you should modify the model weights.
+/// In particular:
+///     model_0 = constant_0 * resolution
+///     model_1 = constant_1
+///     model_2 = constant_2 / resolution
+///     model_3 = constant_3 / resolution^2
+/// Where resolution is e.g. the width of your lattice.
 struct Weights
 {
 	float data_pos      = 1.00f; // How much we trust the point positions

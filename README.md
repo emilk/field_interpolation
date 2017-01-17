@@ -4,6 +4,7 @@ A novel(?) method for interpolating sparse and/or noisy data in one or several d
 Data interpolation using sparse linear least squares on a lattice.
 
 Like finite elements. Similar to https://en.wikipedia.org/wiki/Thin_plate_spline.
+The constraints form a [boundary value problem](https://en.wikipedia.org/wiki/Boundary_value_problem)
 
 More info coming soon.
 

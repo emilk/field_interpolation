@@ -2,7 +2,6 @@
 #include <sstream>
 #include <vector>
 
-#include <imgui/imgui.h>
 #include <SDL2/SDL.h>
 #include <stb/stb_image.h>
 
@@ -47,7 +46,7 @@ struct Shape
 	float  circleness      =  0;
 	size_t polygon_sides   =  3;
 
-	float  angle_offset    =  0;
+	float  rotation        =  0;
 };
 
 struct Options
@@ -89,7 +88,7 @@ using Dualf = emilib::Dual<float>;
 
 auto circle_point(const Shape& shape, Dualf t) -> std::pair<Dualf, Dualf>
 {
-	Dualf angle = t * TAUf;
+	Dualf angle = t * TAUf + shape.rotation;
 	return std::make_pair(std::cos(angle), std::sin(angle));
 }
 
@@ -99,7 +98,7 @@ auto poly_point(const Shape& shape, Dualf t) -> std::pair<Dualf, Dualf>
 
 	auto polygon_corner = [&](int corner) {
 		float angle = TAUf * corner / shape.polygon_sides;
-		angle += shape.angle_offset;
+		angle += shape.rotation;
 		return Vec2(std::cos(angle), std::sin(angle));
 	};
 
@@ -118,8 +117,6 @@ auto poly_point(const Shape& shape, Dualf t) -> std::pair<Dualf, Dualf>
 /// t = [0, 1] along perimeter
 auto shape_point(const Shape& shape, Dualf t)
 {
-	t += shape.angle_offset / TAUf;
-
 	Dualf circle_x, circle_y;
 	Dualf poly_x,   poly_y;
 	std::tie(circle_x, circle_y) = circle_point(shape, t);
@@ -294,7 +291,7 @@ bool showshapeOption(Shape* shape)
 	changed |= ImGui::SliderFloat("radius",         &shape->radius,        0,    1);
 	changed |= ImGui::SliderFloat("circleness",     &shape->circleness,   -2,       3);
 	changed |= ImGuiPP::SliderSize("polygon_sides", &shape->polygon_sides, 3,       8);
-	changed |= ImGui::SliderAngle("angle_offset",   &shape->angle_offset,  0,  360);
+	changed |= ImGui::SliderAngle("rotation",   &shape->rotation,  0,  360);
 	changed |= ImGui::SliderFloat2("lopsidedness",  shape->lopsidedness,   0,       2);
 	return changed;
 }
@@ -307,10 +304,10 @@ bool showWeights(Weights* weights)
 	changed |= ImGui::SliderFloat("data_pos",      &weights->data_pos,      0, 10, "%.4f", 4);
 	changed |= ImGui::SliderFloat("data_gradient", &weights->data_gradient, 0, 10, "%.4f", 4);
 	ImGui::Text("How much we trust the model:");
-	changed |= ImGui::SliderFloat("model_0",       &weights->model_0,       0, 10, "%.4f", 4);
-	changed |= ImGui::SliderFloat("model_1",       &weights->model_1,       0, 10, "%.4f", 4);
-	changed |= ImGui::SliderFloat("model_2",       &weights->model_2,       0, 10, "%.4f", 4);
-	changed |= ImGui::SliderFloat("model_3",       &weights->model_3,       0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("model_0 (regularization)", &weights->model_0, 0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("model_1 (flatness)",       &weights->model_1, 0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("model_2 (smoothness)",     &weights->model_2, 0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("model_3",                  &weights->model_3, 0, 10, "%.4f", 4);
 
 	return changed;
 }
@@ -360,6 +357,19 @@ ImGuiWindowFlags fullscreen_window_flags()
 	ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiSetCond_FirstUseEver);
 	ImGui::SetNextWindowSizeConstraints({width, height}, {width, height});
 	return ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar;
+}
+
+void show_texture_options(gl::Texture* texture)
+{
+	auto params = texture->params();
+	ImGui::Text("Filter:");
+	ImGui::SameLine();
+	int is_nearest = params.filter == gl::TexFilter::Nearest;
+	ImGui::RadioButton("Nearest", &is_nearest, 1);
+	ImGui::SameLine();
+	ImGui::RadioButton("Linear", &is_nearest, 0);
+	params.filter = is_nearest ? gl::TexFilter::Nearest : gl::TexFilter::Linear;
+	texture->set_params(params);
 }
 
 void show_cells(const Options& options, ImVec2 canvas_pos, ImVec2 canvas_size)
@@ -450,6 +460,84 @@ void show_field_equations(const LatticeField& field)
 	ImGui::TextUnformatted(eq_str.c_str());
 }
 
+void show_1d_field_window()
+{
+	struct Point
+	{
+		float pos, value, gradient;
+		float value_weight, gradient_weight;
+	};
+	static std::vector<Point> s_points{
+		{0.2f, 0, +1, 1, 1},
+		{0.8f, 0, -1, 1, 1},
+	};
+
+	static int     s_resolution = 64;
+	static Weights s_weights;
+
+	ImGui::SliderInt("resolution", &s_resolution, 4, 512);
+	showWeights(&s_weights);
+
+	for (const auto i : emilib::indices(s_points)) {
+		auto& point = s_points[i];
+		ImGui::PushID(i);
+		ImGui::Text("Point %lu:", i);
+		ImGui::SliderFloat("pos", &point.pos, 0, 1);
+		ImGui::SliderFloat("value", &point.value, 0, 1);
+		ImGui::SliderFloat("value_weight", &point.value_weight, 0, 1);
+		ImGui::SliderFloat("gradient", &point.gradient, -1, 1);
+		ImGui::SliderFloat("gradient_weight", &point.gradient_weight, 0, 1);
+		ImGui::PopID();
+	}
+
+	LatticeField field{{s_resolution}};
+	add_field_constraints(&field, s_weights);
+
+	for (const auto& point : s_points) {
+		float pos_lattice = point.pos * (s_resolution - 1);
+		float gradient_lattice = point.gradient / (s_resolution - 1);
+		add_value_constraint(&field, &pos_lattice, point.value, point.value_weight);
+		add_gradient_constraint(&field, &pos_lattice, &gradient_lattice, point.gradient_weight);
+	}
+
+	const size_t num_unknowns = s_resolution;
+	const bool double_precision = true;
+	auto interpolated =
+		solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs, double_precision);
+	if (interpolated.size() != num_unknowns) {
+		LOG_F(ERROR, "Failed to find a solution");
+		interpolated.resize(num_unknowns, 0.0f);
+	}
+
+	ImVec2 canvas_size{384, 384};
+	ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
+	ImGui::InvisibleButton("canvas", canvas_size);
+	ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+	auto canvas_from_field = [=](float x, float y) {
+		return ImVec2{
+			canvas_pos.x + canvas_size.x * x,
+			canvas_pos.y + canvas_size.y * (1 - y)};
+	};
+
+	ImGui::Text("interpolated: %f %f ...", interpolated[0], interpolated[1]);
+
+	std::vector<ImVec2> field_points;
+	for (size_t i : emilib::indices(interpolated)) {
+		field_points.push_back(canvas_from_field(i / (s_resolution - 1.0f), interpolated[i]));
+		draw_list->AddCircleFilled(field_points.back(), 2, ImColor(1.0f, 1.0f, 1.0f, 1.0f));
+	}
+
+	draw_list->AddPolyline(field_points.data(), field_points.size(), ImColor(1.0f, 1.0f, 1.0f, 1.0f), false, 2, true);
+
+	for (const auto& point : s_points) {
+		float arrow_len = 64;
+		ImVec2 point_pos = canvas_from_field(point.pos, point.value);
+		draw_list->AddCircleFilled(point_pos, 5, ImColor(1.0f, 0.0f, 0.0f, 1.0f));
+		draw_list->AddLine(point_pos, point_pos + ImVec2{arrow_len, arrow_len * -point.gradient}, 3, ImColor(1.5f, 0.0f, 0.0f, 0.5f));
+	}
+}
+
 void show_2d_field_window()
 {
 	// Based on https://en.wikipedia.org/wiki/Multivariate_interpolation
@@ -468,6 +556,7 @@ void show_2d_field_window()
 	showWeights(&s_weights);
 
 	LatticeField field{{s_resolution, s_resolution}};
+	add_field_constraints(&field, s_weights);
 
 	for (int y = 0; y < 4; ++y) {
 		for (int x = 0; x < 4; ++x) {
@@ -478,8 +567,6 @@ void show_2d_field_window()
 			add_value_constraint(&field, pos, values[y * 4 + x], s_weights.data_pos);
 		}
 	}
-
-	add_field_constraints(&field, s_weights);
 
 	const size_t num_unknowns = s_resolution * s_resolution;
 	const bool double_precision = true;
@@ -504,6 +591,7 @@ void show_2d_field_window()
 	s_texture.set_data(colors.data(), image_size, gl::ImageFormat::RGBA32);
 
 	ImVec2 canvas_size{384, 384};
+	show_texture_options(&s_texture);
 	ImGui::Image(reinterpret_cast<ImTextureID>(s_texture.id()), canvas_size);
 
 	// show_field_equations(field);
@@ -548,6 +636,11 @@ int main(int argc, char* argv[])
 
 		ImGui::ShowTestWindow();
 
+		if (ImGui::Begin("1D field interpolation")) {
+			show_1d_field_window();
+		}
+		ImGui::End();
+
 		if (ImGui::Begin("2D field interpolation")) {
 			show_2d_field_window();
 		}
@@ -583,6 +676,12 @@ int main(int argc, char* argv[])
 			show_cells(options, canvas_pos, canvas_size);
 			if (draw_points) { show_points(options, result.point_positions, result.point_normals, canvas_pos, canvas_size); }
 			if (draw_blob) { show_blob(options.resolution, lines, canvas_pos, canvas_size); }
+
+			show_texture_options(&sdf_texture);
+			blob_texture.set_params(sdf_texture.params());
+
+			// HACK to apply the params:
+			sdf_texture.bind(); blob_texture.bind();
 
 			ImGui::Image(reinterpret_cast<ImTextureID>(sdf_texture.id()), canvas_size);
 			ImGui::SameLine();

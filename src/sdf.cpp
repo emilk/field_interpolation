@@ -29,6 +29,8 @@ std::ostream& operator<<(std::ostream& os, const LinearEquation& eq)
 void add_equation(
 	LinearEquation* eq, Weight weight, Rhs rhs, std::initializer_list<LinearEquationPair> pairs)
 {
+	if (weight.value == 0) { return; }
+
 	// bool all_zero = rhs == 0;
 	bool all_zero = true;
 	int row = eq->rhs.size();
@@ -144,9 +146,9 @@ bool add_gradient_constraint(
 			// d f(x, y) / dx = gradient[0]
 			// d f(x, y) / dy = gradient[1]
 			// ...
-			add_equation(&field->eq, Weight{weight * lerp_weights[i]}, Rhs{gradient[d]}, {
-				{indices[i] + 0,      -weight * lerp_weights[i]},
-				{indices[i] + stride, +weight * lerp_weights[i]},
+			add_equation(&field->eq, Weight{weight * lerp_weights[i] / 2.0f}, Rhs{gradient[d]}, {
+				{indices[i] + 0,      -1.0f},
+				{indices[i] + stride, +1.0f},
 			});
 			stride *= field->sizes[d];
 		}
