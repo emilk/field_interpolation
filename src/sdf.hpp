@@ -6,6 +6,7 @@
 
 /*
 This library helps you set up a sparse linear system to estimate a field from a set of constraints.
+The field will be represented by a square lattice (a grid).
 There are two types of constraint:
 	* Model constraint. These are equations describing the smoothness of the field.
 	* Data constraints. This is specific things we know about the field. Can be:
@@ -21,8 +22,9 @@ Your model constraint weights may be high if you trust that the field is smooth.
 You can thus tweak the relative weights for:
 	* A lot of noisy data (high smoothness weight, low data weight)
 	* Sparse and accurate data (low smoothness weight, hight data weight)
+	* Sharpness/smoothness of model (soft hills or sharp mountains?)
 
-The library is agnostic to dimensionality, but was mainly designed for low-dimensional system.
+The library is agnostic to dimensionality, but was mainly designed for low-dimensional systems.
 In particular: 1D, 2D, 3D.
 
 Example use cases:
@@ -48,9 +50,9 @@ struct Strengths
 {
 	float data_pos      = 1.00f; // How much we trust the point positions
 	float data_gradient = 1.00f; // How much we trust the point normals
-	float model_0       = 0.00f; // How much we believe the field to be zero (regularization).
-	float model_1       = 0.05f; // How much we believe the field to be uniform.
-	float model_2       = 0.50f; // How much we believe the field to be smooth.
+	float model_0       = 1e-6f; // How much we believe the field to be zero (regularization).
+	float model_1       = 0.10f; // How much we believe the field to be uniform.
+	float model_2       = 1.00f; // How much we believe the field to be smooth.
 	float model_3       = 0.00f; // Another order of smoothness.
 };
 
@@ -60,6 +62,8 @@ struct LinearEquation
 	std::vector<Triplet> triplets;
 	std::vector<float>   rhs;
 };
+
+std::ostream& operator<<(std::ostream& os, const LinearEquation& eq);
 
 struct LinearEquationPair
 {
@@ -103,6 +107,8 @@ bool add_gradient_constraint(
 	float          strength);
 
 /// Helper function for generating a signed distance field:
+/// The resulting distances may be scaled arbitrarily, and only accurate near field=0.
+/// Still, it will be useful for finding the field=0 surface using e.g. marching cubes.
 LatticeField sdf_from_points(
 	const std::vector<int>& sizes,          // Lattice size: one for each dimension
 	const Strengths&        strengths,

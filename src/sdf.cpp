@@ -1,15 +1,35 @@
 #include "sdf.hpp"
 
 #include <cmath>
+#include <ostream>
 
 #include <loguru.hpp>
 
 const int TWO_TO_MAX_DIM = (1 << 4);
 
-/// Helper to add a row to the linear equation.
+std::ostream& operator<<(std::ostream& os, const LinearEquation& eq)
+{
+	const size_t num_rows = eq.rhs.size();
+	std::vector<std::vector<Triplet>> row_triplets(num_rows);
+
+	for (const auto& triplet : eq.triplets) {
+		row_triplets[triplet.row].push_back(triplet);
+	}
+
+	for (size_t i = 0; i < num_rows; ++i) {
+		os << eq.rhs[i] << " = ";
+		for (const auto& triplet : row_triplets[i]) {
+			os << triplet.value << " * x" << triplet.col << "  +  ";
+		}
+		os << "\n";
+	}
+	return os;
+}
+
 void add_equation(LinearEquation* eq, float rhs, std::initializer_list<LinearEquationPair> pairs)
 {
-	bool all_zero = rhs == 0;
+	// bool all_zero = rhs == 0;
+	bool all_zero = true;
 	int row = eq->rhs.size();
 	for (const auto& pair : pairs) {
 		if (pair.value != 0) {
@@ -69,17 +89,29 @@ bool add_value_constraint(
 	float         value,
 	float         strength)
 {
+	if (strength == 0) { return false; }
+
 	int indices[TWO_TO_MAX_DIM];
 	float weights[TWO_TO_MAX_DIM];
 	if (!multilerp(indices, weights, field->sizes, pos, 0)) {
 		return false;
 	}
 
+	#if 0
+	// One equation for all four...
+	int row = field->eq.rhs.size();
 	for (size_t i = 0; i < (1 << field->sizes.size()); ++i) {
-		add_equation(&field->eq, value * strength, {
+		field->eq.triplets.emplace_back(row, indices[i], weights[i] * strength);
+	}
+	field->eq.rhs.emplace_back(value * strength);
+	#else
+	// ...or four individual ones?
+	for (size_t i = 0; i < (1 << field->sizes.size()); ++i) {
+		add_equation(&field->eq, value * strength * weights[i], {
 			{indices[i], weights[i] * strength},
 		});
 	}
+	#endif
 	return true;
 }
 
@@ -90,13 +122,13 @@ bool add_gradient_constraint(
 	float         strength)
 {
 	/*
-	We want to spread the contribution using bilinear interpolation:
+	We spread the contribution using bilinear interpolation.
 
-	Consider the coordinate 3 - it should spread the weights equally over neighbors:
+	Consider the coordinate 3.0 - it should spread the weights equally over neighbors:
 		(x[3] - x[2] = dx) * 0.5
 		(x[4] - x[3] = dx) * 0.5
 
-	Now Consider the coordinate 3.2. It should spread more weight on the next constraint:
+	Now consider the coordinate 3.2. It should spread more weight on the next constraint:
 		(x[3] - x[2] = dx) * 0.3
 		(x[4] - x[3] = dx) * 0.7
 	*/
@@ -141,6 +173,7 @@ void add_model_constraint(
 {
 	if (0 <= dim_cord && dim_cord < dim_size) {
 		// f(x) = 0
+		// Tikhonov diagonal regularization
 		add_equation(&field->eq, 0.0f, {
 			{index, strengths.model_0},
 		});
@@ -149,27 +182,27 @@ void add_model_constraint(
 	if (0 <= dim_cord && dim_cord + 1 < dim_size) {
 		// f′(x) = 0   ⇔   f(x) = f(x + 1)
 		add_equation(&field->eq, 0.0f, {
-			{index + 0,      -1 * strengths.model_1},
-			{index + stride, +1 * strengths.model_1},
+			{index + 0,      -0.5f * strengths.model_1},
+			{index + stride, +0.5f * strengths.model_1},
 		});
 	}
 
 	if (1 <= dim_cord && dim_cord + 1 < dim_size) {
 		// f″(x) = 0   ⇔   f′(x - ½) = f′(x + ½)
 		add_equation(&field->eq, 0.0f, {
-			{index - stride, +1 * strengths.model_2},
-			{index + 0,      -2 * strengths.model_2},
-			{index + stride, +1 * strengths.model_2},
+			{index - stride, +0.25f * strengths.model_2},
+			{index + 0,      -0.50f * strengths.model_2},
+			{index + stride, +0.25f * strengths.model_2},
 		});
 	}
 
 	if (2 <= dim_cord && dim_cord + 2 < dim_size) {
 		// f‴(x) = 0   ⇔   f″(x - 1) = f″(x + 1)
 		add_equation(&field->eq, 0.0f, {
-			{index - 2 * stride, +1 * strengths.model_3},
-			{index - 1 * stride, -2 * strengths.model_3},
-			{index + 1 * stride, +2 * strengths.model_3},
-			{index + 2 * stride, -1 * strengths.model_3},
+			{index - 2 * stride, +1.0f / 6.0f * strengths.model_3},
+			{index - 1 * stride, -2.0f / 6.0f * strengths.model_3},
+			{index + 1 * stride, +2.0f / 6.0f * strengths.model_3},
+			{index + 2 * stride, -1.0f / 6.0f * strengths.model_3},
 		});
 	}
 }

@@ -1,8 +1,10 @@
-#include <vector>
 #include <random>
+#include <sstream>
+#include <vector>
 
 #include <imgui/imgui.h>
 #include <SDL2/SDL.h>
+#include <stb/stb_image.h>
 
 #include <emilib/dual.hpp>
 #include <emilib/gl_lib.hpp>
@@ -14,6 +16,7 @@
 #include <emilib/irange.hpp>
 #include <emilib/marching_squares.hpp>
 #include <emilib/math.hpp>
+#include <emilib/scope_exit.hpp>
 #include <emilib/tga.hpp>
 #include <emilib/timer.hpp>
 #include <loguru.hpp>
@@ -34,17 +37,17 @@ struct RGBA
 
 struct Shape
 {
-	bool   inverted     = false;
-	size_t num_points   = 64;
-	float  lopsidedness[2] =  {1.0f, 1.0f};
+	bool   inverted        = false;
+	size_t num_points      = 64;
+	float  lopsidedness[2] = {1.0f, 1.0f};
 
-	float  center       =  0.5f;
-	float  radius       =  0.35f;
+	float  center          =  0.5f;
+	float  radius          =  0.35f;
 
-	float  circleness    = 0;
-	size_t polygon_sides = 3;
+	float  circleness      =  0;
+	size_t polygon_sides   =  3;
 
-	float  angle_offset =  0;
+	float  angle_offset    =  0;
 };
 
 struct Options
@@ -284,16 +287,16 @@ bool showshapeOption(Shape* shape)
 {
 	bool changed = false;
 
-    ImGui::Text("Shape:");
-    changed |= ImGui::Checkbox("inverted (hole)",   &shape->inverted);
-    changed |= ImGuiPP::SliderSize("num_points",    &shape->num_points,    1, 1024, 2);
-    changed |= ImGui::SliderFloat("center",         &shape->center,        0,    1);
-    changed |= ImGui::SliderFloat("radius",         &shape->radius,        0,    1);
-    changed |= ImGui::SliderFloat("circleness",     &shape->circleness,   -2,       3);
-    changed |= ImGuiPP::SliderSize("polygon_sides", &shape->polygon_sides, 3,       8);
-    changed |= ImGui::SliderAngle("angle_offset",   &shape->angle_offset,  0,  360);
-    changed |= ImGui::SliderFloat2("lopsidedness",  shape->lopsidedness,   0,       2);
-    return changed;
+	ImGui::Text("Shape:");
+	changed |= ImGui::Checkbox("inverted (hole)",   &shape->inverted);
+	changed |= ImGuiPP::SliderSize("num_points",    &shape->num_points,    1, 1024, 2);
+	changed |= ImGui::SliderFloat("center",         &shape->center,        0,    1);
+	changed |= ImGui::SliderFloat("radius",         &shape->radius,        0,    1);
+	changed |= ImGui::SliderFloat("circleness",     &shape->circleness,   -2,       3);
+	changed |= ImGuiPP::SliderSize("polygon_sides", &shape->polygon_sides, 3,       8);
+	changed |= ImGui::SliderAngle("angle_offset",   &shape->angle_offset,  0,  360);
+	changed |= ImGui::SliderFloat2("lopsidedness",  shape->lopsidedness,   0,       2);
+	return changed;
 }
 
 bool showStrengths(Strengths* strengths)
@@ -437,6 +440,75 @@ void show_blob(size_t resolution, const std::vector<float>& lines, ImVec2 canvas
 #endif
 	}
 }
+
+void show_field_equations(const LatticeField& field)
+{
+	std::stringstream ss;
+	ss << field.eq;
+	std::string eq_str = ss.str();
+	ImGui::Text("%lu equations:\n", field.eq.rhs.size());
+	ImGui::TextUnformatted(eq_str.c_str());
+}
+
+void show_2d_field_window()
+{
+	// Based on https://en.wikipedia.org/wiki/Multivariate_interpolation
+	float values[4 * 4] = {
+		5, 4, 2, 3,
+		4, 2, 1, 5,
+		6, 3, 5, 2,
+		1, 2, 4, 1,
+	};
+
+	static int         s_resolution = 64;
+	static Strengths   s_strengths;
+	static gl::Texture s_texture{"2d_field", gl::TexParams::clamped_nearest()};
+
+	ImGui::SliderInt("resolution", &s_resolution, 4, 64);
+	showStrengths(&s_strengths);
+
+	LatticeField field{{s_resolution, s_resolution}};
+
+	for (int y = 0; y < 4; ++y) {
+		for (int x = 0; x < 4; ++x) {
+			const float pos[2] = {
+				remap(x, -1.0f, 4.0f, 0.0f, s_resolution - 1.0f),
+				remap(y, -1.0f, 4.0f, 0.0f, s_resolution - 1.0f),
+			};
+			add_value_constraint(&field, pos, values[y * 4 + x], s_strengths.data_pos);
+		}
+	}
+
+	add_field_constraints(&field, s_strengths);
+
+	const size_t num_unknowns = s_resolution * s_resolution;
+	const bool double_precision = true;
+	auto interpolated =
+		solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs, double_precision);
+	if (interpolated.size() != num_unknowns) {
+		LOG_F(ERROR, "Failed to find a solution");
+		interpolated.resize(num_unknowns, 0.0f);
+	}
+
+	int colormap_width, colormap_height;
+	RGBA* colormap = reinterpret_cast<RGBA*>(stbi_load("colormap_jet.png", &colormap_width, &colormap_height, nullptr, 4));
+	SCOPE_EXIT{ stbi_image_free(colormap); };
+
+	std::vector<RGBA> colors;
+	for (float value : interpolated) {
+		int colormap_x = remap_clamp(value, 0, 6, 0, colormap_width - 1);
+		colors.emplace_back(colormap[colormap_x]);
+	}
+
+	const auto image_size = gl::Size{static_cast<unsigned>(s_resolution), static_cast<unsigned>(s_resolution)};
+	s_texture.set_data(colors.data(), image_size, gl::ImageFormat::RGBA32);
+
+	ImVec2 canvas_size{384, 384};
+	ImGui::Image(reinterpret_cast<ImTextureID>(s_texture.id()), canvas_size);
+
+	// show_field_equations(field);
+}
+
 int main(int argc, char* argv[])
 {
 	loguru::g_colorlogtostderr = false;
@@ -476,6 +548,11 @@ int main(int argc, char* argv[])
 
 		ImGui::ShowTestWindow();
 
+		if (ImGui::Begin("2D field interpolation")) {
+			show_2d_field_window();
+		}
+		ImGui::End();
+
 		if (ImGui::Begin("Input")) {
 			if (showOptions(&options)) {
 				result = generate(options);
@@ -484,13 +561,14 @@ int main(int argc, char* argv[])
 				blob_texture.set_data(result.blob_image.data(), image_size, gl::ImageFormat::RGBA32);
 			}
 		}
+		ImGui::End();
 
 		if (ImGui::Begin("Result")) {
 			const auto lines = emilib::marching_squares(options.resolution, options.resolution, result.sdf.data());
 			const float lines_area = emilib::calc_area(lines.size() / 4, lines.data()) / sqr(options.resolution - 1);
 
 			ImGui::Text("%lu equations", result.field.eq.rhs.size());
-			ImGui::Text("%lu values in matrix", result.field.eq.triplets.size());
+			ImGui::Text("%lu non-zero values in matrix", result.field.eq.triplets.size());
 			ImGui::Text("Calculated in %.3f s", result.duration_seconds);
 			ImGui::Text("Model area: %.3f, marching squares area: %.3f, sdf blob area: %.3f",
 				area(options.shapes), lines_area, result.blob_area);
@@ -517,6 +595,7 @@ int main(int argc, char* argv[])
 				CHECK_F(emilib::write_tga("blob.tga", res, res, result.blob_image.data(), alpha));
 			}
 		}
+		ImGui::End();
 
 		glClearColor(0.1f, 0.1f, 0.1f, 0);
 		glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
