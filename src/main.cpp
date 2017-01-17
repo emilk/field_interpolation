@@ -57,7 +57,7 @@ struct Options
 	std::vector<Shape> shapes;
 	float              pos_noise        =  0.005f;
 	float              dir_noise        =  0.05f;
-	Strengths          strengths;
+	Weights            weights;
 	bool               double_precision = true;
 
 	Options()
@@ -200,7 +200,7 @@ auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Opti
 
 	static_assert(sizeof(Vec2) == 2 * sizeof(float), "Pack");
 	const auto field = sdf_from_points(
-		{width, height}, options.strengths, positions.size(), &positions[0].x, &normals[0].x, nullptr);
+		{width, height}, options.weights, positions.size(), &positions[0].x, &normals[0].x, nullptr);
 
 	const size_t num_unknowns = width * height;
 	auto sdf = solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs, options.double_precision);
@@ -299,18 +299,18 @@ bool showshapeOption(Shape* shape)
 	return changed;
 }
 
-bool showStrengths(Strengths* strengths)
+bool showWeights(Weights* weights)
 {
 	bool changed = false;
 
 	ImGui::Text("How much we trust the data:");
-	changed |= ImGui::SliderFloat("data_pos",      &strengths->data_pos,      0, 10, "%.4f", 4);
-	changed |= ImGui::SliderFloat("data_gradient", &strengths->data_gradient, 0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("data_pos",      &weights->data_pos,      0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("data_gradient", &weights->data_gradient, 0, 10, "%.4f", 4);
 	ImGui::Text("How much we trust the model:");
-	changed |= ImGui::SliderFloat("model_0",       &strengths->model_0,       0, 10, "%.4f", 4);
-	changed |= ImGui::SliderFloat("model_1",       &strengths->model_1,       0, 10, "%.4f", 4);
-	changed |= ImGui::SliderFloat("model_2",       &strengths->model_2,       0, 10, "%.4f", 4);
-	changed |= ImGui::SliderFloat("model_3",       &strengths->model_3,       0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("model_0",       &weights->model_0,       0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("model_1",       &weights->model_1,       0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("model_2",       &weights->model_2,       0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("model_3",       &weights->model_3,       0, 10, "%.4f", 4);
 
 	return changed;
 }
@@ -345,7 +345,7 @@ bool showOptions(Options* options)
 	changed |= ImGui::SliderFloat("pos_noise", &options->pos_noise, 0, 0.1, "%.4f");
 	changed |= ImGui::SliderAngle("dir_noise", &options->dir_noise, 0,    360);
 	ImGui::Separator();
-	changed |= showStrengths(&options->strengths);
+	changed |= showWeights(&options->weights);
 	changed |= ImGui::Checkbox("Solve with double precision", &options->double_precision);
 
 	return changed;
@@ -461,11 +461,11 @@ void show_2d_field_window()
 	};
 
 	static int         s_resolution = 64;
-	static Strengths   s_strengths;
+	static Weights     s_weights;
 	static gl::Texture s_texture{"2d_field", gl::TexParams::clamped_nearest()};
 
 	ImGui::SliderInt("resolution", &s_resolution, 4, 64);
-	showStrengths(&s_strengths);
+	showWeights(&s_weights);
 
 	LatticeField field{{s_resolution, s_resolution}};
 
@@ -475,11 +475,11 @@ void show_2d_field_window()
 				remap(x, -1.0f, 4.0f, 0.0f, s_resolution - 1.0f),
 				remap(y, -1.0f, 4.0f, 0.0f, s_resolution - 1.0f),
 			};
-			add_value_constraint(&field, pos, values[y * 4 + x], s_strengths.data_pos);
+			add_value_constraint(&field, pos, values[y * 4 + x], s_weights.data_pos);
 		}
 	}
 
-	add_field_constraints(&field, s_strengths);
+	add_field_constraints(&field, s_weights);
 
 	const size_t num_unknowns = s_resolution * s_resolution;
 	const bool double_precision = true;

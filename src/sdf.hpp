@@ -46,7 +46,7 @@ const int MAX_DIM = 4;
 /// If your model is smooth, use a high model_2 and low everything else.
 /// If your data is trustworthy, you should lower the model weights (e.g. 1/10th of the data weights).
 /// If your data is noisy, you should use higher model weights.
-struct Strengths
+struct Weights
 {
 	float data_pos      = 1.00f; // How much we trust the point positions
 	float data_gradient = 1.00f; // How much we trust the point normals
@@ -80,13 +80,17 @@ struct LatticeField
 	explicit LatticeField(const std::vector<int>& sizes_arg) : sizes(sizes_arg) { }
 };
 
+struct Weight { float value; };
+struct Rhs    { float value; };
+
 /// Helper to add a row to the linear equation.
-void add_equation(LinearEquation* eq, float rhs, std::initializer_list<LinearEquationPair> pairs);
+void add_equation(
+	LinearEquation* eq, Weight weight, Rhs rhs, std::initializer_list<LinearEquationPair> pairs);
 
 /// Add equations describing the model: a smooth field on a lattice.
 void add_field_constraints(
-	LatticeField*    field,
-	const Strengths& strengths);
+	LatticeField*  field,
+	const Weights& weights);
 
 /// Add a value constraint:  f(pos) = value
 /// This is a no-op if pos is close to or outside of the field.
@@ -95,7 +99,7 @@ bool add_value_constraint(
 	LatticeField* field,
 	const float   pos[],
 	float         value,
-	float         strength);
+	float         weight);
 
 /// Add a gradient constraint:  ∇ f(pos) = gradient
 /// This is a no-op if pos is close to or outside of the field.
@@ -104,14 +108,14 @@ bool add_gradient_constraint(
 	LatticeField* field,
 	const float    pos[],
 	const float    gradient[],
-	float          strength);
+	float          weight);
 
 /// Helper function for generating a signed distance field:
 /// The resulting distances may be scaled arbitrarily, and only accurate near field=0.
 /// Still, it will be useful for finding the field=0 surface using e.g. marching cubes.
 LatticeField sdf_from_points(
 	const std::vector<int>& sizes,          // Lattice size: one for each dimension
-	const Strengths&        strengths,
+	const Weights&          weights,
 	const int               num_points,
 	const float             positions[],    // Interleaved coordinates, e.g. xyxyxy...
 	const float*            normals,        // Optional (may be null).
