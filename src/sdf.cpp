@@ -47,7 +47,7 @@ void add_equation(
 
 /// Computed coefficients for multi-dimensional linear interpolation of 2^D neighbors.
 /// Returns false iff this is too close to, or outside of, a border.
-bool multilerp(
+int multilerp(
 	int                     out_index[],
 	float                   out_weight[],
 	const std::vector<int>& sizes,
@@ -62,28 +62,31 @@ bool multilerp(
 	for (int d = 0; d < num_dim; ++d) {
 		floored[d] = std::floor(in_pos[d]);
 		t[d] = in_pos[d] - floored[d];
-
-		if (floored[d] < 0 || sizes[d] <= floored[d] + 1 + extra_bound) {
-			return false;
-		}
 	}
+
+	int num_samples = 0;
 
 	for (int i = 0; i < (1 << num_dim); ++i) {
 		int index = 0;
 		int stride = 1;
 		float weight = 1;
+		bool inside = true;
 		for (int d = 0; d < num_dim; ++d) {
 			const int set = (i >> d) & 1;
 			int dim_coord = floored[d] + set;
 			index  += stride * dim_coord;
 			weight *= (set ? t[d] : 1.0f - t[d]);
 			stride *= sizes[d];
+			inside &= (0 <= dim_coord && dim_coord + extra_bound < sizes[d]);
 		}
-		out_index[i] = index;
-		out_weight[i] = weight;
+		if (inside) {
+			out_index[num_samples] = index;
+			out_weight[num_samples] = weight;
+			num_samples += 1;
+		}
 	}
 
-	return true;
+	return num_samples;
 }
 
 bool add_value_constraint(
@@ -96,15 +99,17 @@ bool add_value_constraint(
 
 	int indices[TWO_TO_MAX_DIM];
 	float lerp_weights[TWO_TO_MAX_DIM];
-	if (!multilerp(indices, lerp_weights, field->sizes, pos, 0)) {
-		return false;
-	}
+	int num_samples = multilerp(indices, lerp_weights, field->sizes, pos, 0);
+	if (num_samples == 0) { return false; }
 
 	int row = field->eq.rhs.size();
-	for (size_t i = 0; i < (1 << field->sizes.size()); ++i) {
-		field->eq.triplets.emplace_back(row, indices[i], lerp_weights[i] * weight);
+	float weight_sum = 0;
+	for (size_t i = 0; i < num_samples; ++i) {
+		float sample_weight = lerp_weights[i] * weight;
+		field->eq.triplets.emplace_back(row, indices[i], sample_weight);
+		weight_sum += sample_weight;
 	}
-	field->eq.rhs.emplace_back(value * weight);
+	field->eq.rhs.emplace_back(weight_sum * value);
 
 	return true;
 }
@@ -115,6 +120,8 @@ bool add_gradient_constraint(
 	const float   gradient[],
 	float         weight)
 {
+	if (weight == 0) { return false; }
+
 	/*
 	We spread the contribution using bilinear interpolation.
 
@@ -136,11 +143,10 @@ bool add_gradient_constraint(
 
 	int indices[TWO_TO_MAX_DIM];
 	float lerp_weights[TWO_TO_MAX_DIM];
-	if (!multilerp(indices, lerp_weights, field->sizes, adjusted_pos, 1)) {
-		return false;
-	}
+	int num_samples = multilerp(indices, lerp_weights, field->sizes, adjusted_pos, 1);
+	if (num_samples == 0) { return false; }
 
-	for (size_t i = 0; i < (1 << num_dim); ++i) {
+	for (size_t i = 0; i < num_samples; ++i) {
 		int stride = 1;
 		for (int d = 0; d < num_dim; ++d) {
 			// d f(x, y) / dx = gradient[0]
