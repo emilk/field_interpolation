@@ -138,3 +138,9 @@ LatticeField sdf_from_points(
 	const float             positions[],    // Interleaved coordinates, e.g. xyxyxy...
 	const float*            normals,        // Optional (may be null).
 	const float*            point_weights); // Optional (may be null).
+
+/// Calculate (Ax - b)^2 and distribute onto the solution space for a heatmap of blame.
+std::vector<float> generate_error_map(
+	const std::vector<Triplet>& triplets,
+	const std::vector<float>&   solution,
+	const std::vector<float>&   rhs);

@@ -5,7 +5,7 @@
 struct Triplet
 {
 	int row, col;
-	float    value;
+	float value;
 
 	Triplet() {}
 	Triplet(int row_, int col_, float value_) : row(row_), col(col_), value(value_) {}

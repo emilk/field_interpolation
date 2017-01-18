@@ -78,13 +78,30 @@ struct Result
 	Vec2List           point_normals;
 	LatticeField       field;
 	std::vector<float> sdf;
+	std::vector<float> heatmap;
 	std::vector<RGBA>  sdf_image;
 	std::vector<RGBA>  blob_image;
+	std::vector<RGBA>  heatmap_image;
 	float              blob_area;
 	double             duration_seconds;
 };
 
 using Dualf = emilib::Dual<float>;
+
+std::vector<RGBA> generate_heatmap(const std::vector<float>& data, float min, float max)
+{
+	int colormap_width, colormap_height;
+	RGBA* colormap = reinterpret_cast<RGBA*>(stbi_load("colormap_jet.png", &colormap_width, &colormap_height, nullptr, 4));
+	CHECK_NOTNULL_F(colormap, "Failed to load colormap: %s", stbi_failure_reason());
+	SCOPE_EXIT{ stbi_image_free(colormap); };
+
+	std::vector<RGBA> colors;
+	for (float value : data) {
+		int colormap_x = remap_clamp(value, min, max, 0, colormap_width - 1);
+		colors.emplace_back(colormap[colormap_x]);
+	}
+	return colors;
+}
 
 auto circle_point(const Shape& shape, Dualf t) -> std::pair<Dualf, Dualf>
 {
@@ -250,6 +267,9 @@ Result generate(const Options& options)
 	}
 
 	std::tie(result.field, result.sdf) = generate_sdf(lattice_positions, result.point_normals, options);
+	result.heatmap = generate_error_map(result.field.eq.triplets, result.sdf, result.field.eq.rhs);
+	result.heatmap_image = generate_heatmap(result.heatmap, 0, *max_element(result.heatmap.begin(), result.heatmap.end()));
+	CHECK_EQ_F(result.heatmap_image.size(), resolution * resolution);
 
 	double area_pixels = 0;
 
@@ -591,19 +611,9 @@ void show_2d_field_window()
 		interpolated.resize(num_unknowns, 0.0f);
 	}
 
-	int colormap_width, colormap_height;
-	RGBA* colormap = reinterpret_cast<RGBA*>(stbi_load("colormap_jet.png", &colormap_width, &colormap_height, nullptr, 4));
-	CHECK_NOTNULL_F(colormap, "Failed to load colormap: %s", stbi_failure_reason());
-	SCOPE_EXIT{ stbi_image_free(colormap); };
-
-	std::vector<RGBA> colors;
-	for (float value : interpolated) {
-		int colormap_x = remap_clamp(value, 0, 6, 0, colormap_width - 1);
-		colors.emplace_back(colormap[colormap_x]);
-	}
-
+	const auto heatmap = generate_heatmap(interpolated, 0, 6);
 	const auto image_size = gl::Size{static_cast<unsigned>(s_resolution), static_cast<unsigned>(s_resolution)};
-	s_texture.set_data(colors.data(), image_size, gl::ImageFormat::RGBA32);
+	s_texture.set_data(heatmap.data(), image_size, gl::ImageFormat::RGBA32);
 
 	ImVec2 canvas_size{384, 384};
 	show_texture_options(&s_texture);
@@ -618,24 +628,28 @@ struct FieldGui
 	Result      result;
 	gl::Texture sdf_texture{ "sdf",  gl::TexParams::clamped_nearest()};
 	gl::Texture blob_texture{"blob", gl::TexParams::clamped_nearest()};
+	gl::Texture heatmap_texture{"heatmap", gl::TexParams::clamped_nearest()};
 	bool draw_points = true;
 	bool draw_blob = true;
 
 	FieldGui()
 	{
+		calc();
+	}
+
+	void calc()
+	{
 		result = generate(options);
 		const auto image_size = gl::Size{static_cast<unsigned>(options.resolution), static_cast<unsigned>(options.resolution)};
-		sdf_texture.set_data(result.sdf_image.data(),   image_size, gl::ImageFormat::RGBA32);
-		blob_texture.set_data(result.blob_image.data(), image_size, gl::ImageFormat::RGBA32);
+		sdf_texture.set_data(result.sdf_image.data(),         image_size, gl::ImageFormat::RGBA32);
+		blob_texture.set_data(result.blob_image.data(),       image_size, gl::ImageFormat::RGBA32);
+		heatmap_texture.set_data(result.heatmap_image.data(), image_size, gl::ImageFormat::RGBA32);
 	}
 
 	void show_input()
 	{
 		if (show_options(&options)) {
-			result = generate(options);
-			const auto image_size = gl::Size{static_cast<unsigned>(options.resolution), static_cast<unsigned>(options.resolution)};
-			sdf_texture.set_data(result.sdf_image.data(),   image_size, gl::ImageFormat::RGBA32);
-			blob_texture.set_data(result.blob_image.data(), image_size, gl::ImageFormat::RGBA32);
+			calc();
 		}
 	}
 
@@ -661,15 +675,22 @@ struct FieldGui
 		if (draw_points) { show_points(options, result.point_positions, result.point_normals, canvas_pos, canvas_size); }
 		if (draw_blob) { show_blob(options.resolution, lines, canvas_pos, canvas_size); }
 
-		show_texture_options(&sdf_texture);
 		blob_texture.set_params(sdf_texture.params());
+		heatmap_texture.set_params(sdf_texture.params());
 
 		// HACK to apply the params:
-		sdf_texture.bind(); blob_texture.bind();
+		sdf_texture.bind(); blob_texture.bind(); heatmap_texture.bind();
+
+		ImGui::SameLine();
+		ImGui::Image(reinterpret_cast<ImTextureID>(heatmap_texture.id()), canvas_size);
+
+		ImGui::Text("Max error: %f", *max_element(result.heatmap.begin(), result.heatmap.end()));
 
 		ImGui::Image(reinterpret_cast<ImTextureID>(sdf_texture.id()), canvas_size);
 		ImGui::SameLine();
 		ImGui::Image(reinterpret_cast<ImTextureID>(blob_texture.id()), canvas_size);
+
+		show_texture_options(&sdf_texture);
 
 		if (ImGui::Button("Save images")) {
 			const auto res = options.resolution;

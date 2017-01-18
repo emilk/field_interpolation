@@ -287,3 +287,38 @@ LatticeField sdf_from_points(
 
 	return field;
 }
+
+std::vector<float> generate_error_map(
+	const std::vector<Triplet>& triplets,
+	const std::vector<float>&   solution,
+	const std::vector<float>&   rhs)
+{
+	std::vector<float> heatmap(solution.size(), 0.0f);
+
+	const int num_rows = rhs.size();
+	std::vector<std::vector<Triplet>> row_triplets(num_rows);
+
+	for (const auto& triplet : triplets) {
+		if (triplet.value != 0) {
+			row_triplets[triplet.row].push_back(triplet);
+		}
+	}
+
+	for (int row = 0; row < num_rows; ++row) {
+		double sum_of_value_sq = 0;
+		double row_error = rhs[row];
+		for (const auto& triplet : row_triplets[row]) {
+			row_error -= solution[triplet.col] * triplet.value;
+			sum_of_value_sq += triplet.value * triplet.value;
+		}
+		row_error *= row_error;
+
+		// Now project back onto the solution:
+		for (const auto& triplet : row_triplets[row]) {
+			double blame_fraction = (triplet.value * triplet.value) / sum_of_value_sq;
+			heatmap[triplet.col] += row_error * blame_fraction;
+		}
+	}
+
+	return heatmap;
+}

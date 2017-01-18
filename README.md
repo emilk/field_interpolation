@@ -28,6 +28,7 @@ More info coming soon.
 ## Gui
 * Use 1D to verify iso-surface positioning is perfect
 * Visualize certainty (abs-gradient should be 1.0 if trustable)
+* Split back-projected error into model and data constraints.
 * Persist parameters after startup
 * More points in 1D view
 * Remove g_alternative_gradient hack
