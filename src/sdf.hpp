@@ -41,6 +41,8 @@ The lattice coordinates go from [0, 0, ...] to [width - 1, height - 1, ...] (inc
 /// with nearest-neighbor instead, if your dimensionality is high.
 const int MAX_DIM = 4;
 
+extern bool g_alternative_gradient;
+
 /// A note about picking good parameters:
 /// If your model is continuous but with abrupt changes, use a high model_1 and low everything else.
 /// If your model is smooth, use a high model_2 and low everything else.

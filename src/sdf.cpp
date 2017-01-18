@@ -7,16 +7,18 @@
 
 const int TWO_TO_MAX_DIM = (1 << 4);
 
+bool g_alternative_gradient = true;
+
 std::ostream& operator<<(std::ostream& os, const LinearEquation& eq)
 {
-	const size_t num_rows = eq.rhs.size();
+	const int num_rows = eq.rhs.size();
 	std::vector<std::vector<Triplet>> row_triplets(num_rows);
 
 	for (const auto& triplet : eq.triplets) {
 		row_triplets[triplet.row].push_back(triplet);
 	}
 
-	for (size_t i = 0; i < num_rows; ++i) {
+	for (int i = 0; i < num_rows; ++i) {
 		os << eq.rhs[i] << " = ";
 		for (const auto& triplet : row_triplets[i]) {
 			os << triplet.value << " * x" << triplet.col << "  +  ";
@@ -46,10 +48,11 @@ void add_equation(
 }
 
 /// Computed coefficients for multi-dimensional linear interpolation of 2^D neighbors.
-/// Returns false iff this is too close to, or outside of, a border.
+/// Returns the number of indices to sample from.
+/// The indices are put in out_indices, the kernel (inteprolation weights) in out_kernel.
 int multilerp(
-	int                 out_index[],
-	float               out_weight[],
+	int                 out_indices[],
+	float               out_kernel[],
 	const LatticeField& field,
 	const float         in_pos[],
 	int                 extra_bound)
@@ -78,8 +81,8 @@ int multilerp(
 			inside &= (0 <= dim_coord && dim_coord + extra_bound < field.sizes[d]);
 		}
 		if (inside) {
-			out_index[num_samples] = index;
-			out_weight[num_samples] = weight;
+			out_indices[num_samples] = index;
+			out_kernel[num_samples] = weight;
 			num_samples += 1;
 		}
 	}
@@ -95,16 +98,16 @@ bool add_value_constraint(
 {
 	if (constraint_weight == 0) { return false; }
 
-	int indices[TWO_TO_MAX_DIM];
-	float lerp_weights[TWO_TO_MAX_DIM];
-	int num_samples = multilerp(indices, lerp_weights, *field, pos, 0);
+	int inteprolation_indices[TWO_TO_MAX_DIM];
+	float interpolation_kernel[TWO_TO_MAX_DIM];
+	int num_samples = multilerp(inteprolation_indices, interpolation_kernel, *field, pos, 0);
 	if (num_samples == 0) { return false; }
 
 	int row = field->eq.rhs.size();
 	float weight_sum = 0;
-	for (size_t i = 0; i < num_samples; ++i) {
-		float sample_weight = lerp_weights[i] * constraint_weight;
-		field->eq.triplets.emplace_back(row, indices[i], sample_weight);
+	for (int i = 0; i < num_samples; ++i) {
+		float sample_weight = interpolation_kernel[i] * constraint_weight;
+		field->eq.triplets.emplace_back(row, inteprolation_indices[i], sample_weight);
 		weight_sum += sample_weight;
 	}
 	field->eq.rhs.emplace_back(weight_sum * value);
@@ -123,13 +126,27 @@ bool add_gradient_constraint(
 	/*
 	We spread the contribution using bilinear interpolation.
 
-	Consider the coordinate 3.0 - it should spread the weights equally over neighbors:
-		(x[3] - x[2] = dx) * 0.5
-		(x[4] - x[3] = dx) * 0.5
+	Case A):
+		pos = 3.5: put all weight onto one equation:
+			(x[4] - x[3] = dx) * 1.0
 
-	Now consider the coordinate 3.2. It should spread more weight on the next constraint:
-		(x[3] - x[2] = dx) * 0.3
-		(x[4] - x[3] = dx) * 0.7
+	Case B):
+		pos = 3.0: spread the weights equally over two neighbors:
+			(x[3] - x[2] = dx) * 0.5
+			(x[4] - x[3] = dx) * 0.5
+
+	Case C):
+	pos = 3.25: spread more weight on the next constraint:
+		(x[3] - x[2] = dx) * 0.25
+		(x[4] - x[3] = dx) * 0.75
+
+	However, this has a bug. We put this through a least *squares* solver.
+	Consider the case x[..] = 0 and dx = 1. Then the errors would be
+		case A) error = 1^2           = 1.0
+		case B) error = .5^2 + .5^2   = 0.5
+		case C) error = .25^2 + .75^2 = 0.625
+
+		This is not good. To compensate, we take the square root of the interpolation weights.
 	*/
 
 	int num_dim = field->sizes.size();
@@ -139,20 +156,39 @@ bool add_gradient_constraint(
 		adjusted_pos[d] = pos[d] - 0.5f;
 	}
 
-	int indices[TWO_TO_MAX_DIM];
-	float lerp_weights[TWO_TO_MAX_DIM];
-	int num_samples = multilerp(indices, lerp_weights, *field, adjusted_pos, 1);
+	int inteprolation_indices[TWO_TO_MAX_DIM];
+	float interpolation_kernel[TWO_TO_MAX_DIM];
+	int num_samples = multilerp(inteprolation_indices, interpolation_kernel, *field, adjusted_pos, 1);
 	if (num_samples == 0) { return false; }
 
-	for (size_t i = 0; i < num_samples; ++i) {
+	if (g_alternative_gradient) {
 		for (int d = 0; d < num_dim; ++d) {
-			// d f(x, y) / dx = gradient[0]
-			// d f(x, y) / dy = gradient[1]
-			// ...
-			add_equation(&field->eq, Weight{constraint_weight * lerp_weights[i] / 2.0f}, Rhs{gradient[d]}, {
-				{indices[i] + 0,                 -1.0f},
-				{indices[i] + field->strides[d], +1.0f},
-			});
+			int row = field->eq.rhs.size();
+			float weight_sum = 0;
+			for (int i = 0; i < num_samples; ++i) {
+				// d f(x, y) / dx = gradient[0]
+				// d f(x, y) / dy = gradient[1]
+				// ...
+				const float sample_weight = interpolation_kernel[i] * constraint_weight;
+				field->eq.triplets.emplace_back(row, inteprolation_indices[i] + 0,                 -sample_weight);
+				field->eq.triplets.emplace_back(row, inteprolation_indices[i] + field->strides[d], +sample_weight);
+				weight_sum += sample_weight;
+			}
+			field->eq.rhs.emplace_back(weight_sum * gradient[d]);
+		}
+
+	} else {
+		for (int i = 0; i < num_samples; ++i) {
+			for (int d = 0; d < num_dim; ++d) {
+				// d f(x, y) / dx = gradient[0]
+				// d f(x, y) / dy = gradient[1]
+				// ...
+				const float equation_weight = constraint_weight * std::sqrt(interpolation_kernel[i]);
+				add_equation(&field->eq, Weight{equation_weight}, Rhs{gradient[d]}, {
+					{inteprolation_indices[i] + 0,                 -1.0f},
+					{inteprolation_indices[i] + field->strides[d], +1.0f},
+				});
+			}
 		}
 	}
 

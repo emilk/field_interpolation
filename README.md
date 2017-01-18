@@ -30,3 +30,4 @@ More info coming soon.
 * Visualize certainty (abs-gradient should be 1.0 if trustable)
 * Persist parameters after startup
 * More points in 1D view
+* Remove g_alternative_gradient hack

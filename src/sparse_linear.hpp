@@ -15,6 +15,7 @@ struct Triplet
 /// Construct matrix A from triplets. Solve for x in  A * x = rhs.
 /// `rows` == `rhs.size()`.
 /// `columns` == number of unknowns
+/// Duplicate elements in triplets will be summed.
 std::vector<float> solve_sparse_linear(
 	int                         columns,
 	const std::vector<Triplet>& triplets,

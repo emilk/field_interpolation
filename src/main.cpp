@@ -280,25 +280,27 @@ Result generate(const Options& options)
 	return result;
 }
 
-bool showshapeOption(Shape* shape)
+bool show_shape_options(Shape* shape)
 {
 	bool changed = false;
 
 	ImGui::Text("Shape:");
 	changed |= ImGui::Checkbox("inverted (hole)",   &shape->inverted);
-	changed |= ImGuiPP::SliderSize("num_points",    &shape->num_points,    1, 1024, 2);
-	changed |= ImGui::SliderFloat("center",         &shape->center,        0,    1);
-	changed |= ImGui::SliderFloat("radius",         &shape->radius,        0,    1);
-	changed |= ImGui::SliderFloat("circleness",     &shape->circleness,   -2,       3);
-	changed |= ImGuiPP::SliderSize("polygon_sides", &shape->polygon_sides, 3,       8);
-	changed |= ImGui::SliderAngle("rotation",   &shape->rotation,  0,  360);
-	changed |= ImGui::SliderFloat2("lopsidedness",  shape->lopsidedness,   0,       2);
+	changed |= ImGuiPP::SliderSize("num_points",    &shape->num_points,  1, 1024, 2);
+	changed |= ImGui::SliderFloat("center",         &shape->center,      0,    1);
+	changed |= ImGui::SliderFloat("radius",         &shape->radius,      0,    1);
+	changed |= ImGui::SliderFloat("circleness",     &shape->circleness, -2,       3);
+	changed |= ImGuiPP::SliderSize("polygon_sides", &shape->polygon_sides, 3,     8);
+	changed |= ImGui::SliderAngle("rotation",       &shape->rotation,    0,  360);
+	changed |= ImGui::SliderFloat2("lopsidedness",  shape->lopsidedness,   0,     2);
 	return changed;
 }
 
-bool showWeights(Weights* weights)
+bool show_weights(Weights* weights)
 {
 	bool changed = false;
+
+	changed |= ImGui::Checkbox("alternative gradient interpolation", &g_alternative_gradient);
 
 	ImGui::Text("How much we trust the data:");
 	changed |= ImGui::SliderFloat("data_pos",      &weights->data_pos,      0, 10, "%.4f", 4);
@@ -312,7 +314,7 @@ bool showWeights(Weights* weights)
 	return changed;
 }
 
-bool showOptions(Options* options)
+bool show_options(Options* options)
 {
 	bool changed = false;
 
@@ -325,7 +327,7 @@ bool showOptions(Options* options)
 	ImGui::Separator();
 	for (const int i : emilib::indices(options->shapes)) {
 		ImGui::PushID(i);
-		changed |= showshapeOption(&options->shapes[i]);
+		changed |= show_shape_options(&options->shapes[i]);
 		ImGui::PopID();
 		ImGui::Separator();
 	}
@@ -342,7 +344,7 @@ bool showOptions(Options* options)
 	changed |= ImGui::SliderFloat("pos_noise", &options->pos_noise, 0, 0.1, "%.4f");
 	changed |= ImGui::SliderAngle("dir_noise", &options->dir_noise, 0,    360);
 	ImGui::Separator();
-	changed |= showWeights(&options->weights);
+	changed |= show_weights(&options->weights);
 	changed |= ImGui::Checkbox("Solve with double precision", &options->double_precision);
 
 	return changed;
@@ -472,11 +474,17 @@ void show_1d_field_window()
 		{0.8f, 0, -1, 1, 1},
 	};
 
-	static int     s_resolution = 64;
-	static Weights s_weights;
+	static int     s_resolution = 12;
+	static Weights s_weights = [](){
+		Weights w;
+		w.model_1 = 0;
+		return w;
+	}();
+
+	s_points[1].pos = remap(std::sin(1.2f * emilib::Timer::seconds_since_startup()), -1, 1, 0.5, 0.7);
 
 	ImGui::SliderInt("resolution", &s_resolution, 4, 512);
-	showWeights(&s_weights);
+	show_weights(&s_weights);
 
 	for (const auto i : emilib::indices(s_points)) {
 		auto& point = s_points[i];
@@ -508,6 +516,7 @@ void show_1d_field_window()
 		LOG_F(ERROR, "Failed to find a solution");
 		interpolated.resize(num_unknowns, 0.0f);
 	}
+	ImGui::Text("interpolated: %f %f ...", interpolated[0], interpolated[1]);
 
 	ImVec2 canvas_size{384, 384};
 	ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
@@ -520,7 +529,10 @@ void show_1d_field_window()
 			canvas_pos.y + canvas_size.y * (1 - y)};
 	};
 
-	ImGui::Text("interpolated: %f %f ...", interpolated[0], interpolated[1]);
+	for (size_t i : emilib::irange_inclusive<size_t>(0, 1)) {
+		draw_list->AddLine(canvas_from_field(0, i), canvas_from_field(1, i), ImColor(1.0f, 1.0f, 1.0f, 0.25f));
+		draw_list->AddLine(canvas_from_field(i, 0), canvas_from_field(i, 1), ImColor(1.0f, 1.0f, 1.0f, 0.25f));
+	}
 
 	std::vector<ImVec2> field_points;
 	for (size_t i : emilib::indices(interpolated)) {
@@ -553,7 +565,7 @@ void show_2d_field_window()
 	static gl::Texture s_texture{"2d_field", gl::TexParams::clamped_nearest()};
 
 	ImGui::SliderInt("resolution", &s_resolution, 4, 64);
-	showWeights(&s_weights);
+	show_weights(&s_weights);
 
 	LatticeField field{{s_resolution, s_resolution}};
 	add_field_constraints(&field, s_weights);
@@ -561,10 +573,12 @@ void show_2d_field_window()
 	for (int y = 0; y < 4; ++y) {
 		for (int x = 0; x < 4; ++x) {
 			const float pos[2] = {
-				remap(x, -1.0f, 4.0f, 0.0f, s_resolution - 1.0f),
-				remap(y, -1.0f, 4.0f, 0.0f, s_resolution - 1.0f),
+				remap(x, 0.0f, 3.0f, 0.0f, s_resolution - 1.0f),
+				remap(y, 0.0f, 3.0f, 0.0f, s_resolution - 1.0f),
 			};
 			add_value_constraint(&field, pos, values[y * 4 + x], s_weights.data_pos);
+			const float zero[2] = {0,0};
+			add_gradient_constraint(&field, pos, zero, s_weights.data_gradient);
 		}
 	}
 
@@ -617,7 +631,7 @@ struct FieldGui
 
 	void show_input()
 	{
-		if (showOptions(&options)) {
+		if (show_options(&options)) {
 			result = generate(options);
 			const auto image_size = gl::Size{static_cast<unsigned>(options.resolution), static_cast<unsigned>(options.resolution)};
 			sdf_texture.set_data(result.sdf_image.data(),   image_size, gl::ImageFormat::RGBA32);
