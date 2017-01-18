@@ -57,6 +57,7 @@ struct Weights
 {
 	float data_pos      = 1.00f; // How much we trust the point positions
 	float data_gradient = 1.00f; // How much we trust the point normals
+	// https://en.wikipedia.org/wiki/Smoothness#Order_of_continuity
 	float model_0       = 1e-6f; // How much we believe the field to be zero (regularization).
 	float model_1       = 0.10f; // How much we believe the field to be uniform.
 	float model_2       = 1.00f; // How much we believe the field to be smooth.
@@ -82,9 +83,17 @@ struct LatticeField
 {
 	LinearEquation   eq;
 	std::vector<int> sizes;
+	std::vector<int> strides; ///< stride[d] == distance between adjacent values along dimension `d`
 
 	LatticeField() = default;
-	explicit LatticeField(const std::vector<int>& sizes_arg) : sizes(sizes_arg) { }
+	explicit LatticeField(const std::vector<int>& sizes_arg) : sizes(sizes_arg)
+	{
+		int stride = 1;
+		for (int size : sizes) {
+			strides.push_back(stride);
+			stride *= size;
+		}
+	}
 };
 
 struct Weight { float value; };

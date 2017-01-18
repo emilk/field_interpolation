@@ -579,6 +579,7 @@ void show_2d_field_window()
 
 	int colormap_width, colormap_height;
 	RGBA* colormap = reinterpret_cast<RGBA*>(stbi_load("colormap_jet.png", &colormap_width, &colormap_height, nullptr, 4));
+	CHECK_NOTNULL_F(colormap, "Failed to load colormap: %s", stbi_failure_reason());
 	SCOPE_EXIT{ stbi_image_free(colormap); };
 
 	std::vector<RGBA> colors;
@@ -597,6 +598,89 @@ void show_2d_field_window()
 	// show_field_equations(field);
 }
 
+struct FieldGui
+{
+	Options     options;
+	Result      result;
+	gl::Texture sdf_texture{ "sdf",  gl::TexParams::clamped_nearest()};
+	gl::Texture blob_texture{"blob", gl::TexParams::clamped_nearest()};
+	bool draw_points = true;
+	bool draw_blob = true;
+
+	FieldGui()
+	{
+		result = generate(options);
+		const auto image_size = gl::Size{static_cast<unsigned>(options.resolution), static_cast<unsigned>(options.resolution)};
+		sdf_texture.set_data(result.sdf_image.data(),   image_size, gl::ImageFormat::RGBA32);
+		blob_texture.set_data(result.blob_image.data(), image_size, gl::ImageFormat::RGBA32);
+	}
+
+	void show_input()
+	{
+		if (showOptions(&options)) {
+			result = generate(options);
+			const auto image_size = gl::Size{static_cast<unsigned>(options.resolution), static_cast<unsigned>(options.resolution)};
+			sdf_texture.set_data(result.sdf_image.data(),   image_size, gl::ImageFormat::RGBA32);
+			blob_texture.set_data(result.blob_image.data(), image_size, gl::ImageFormat::RGBA32);
+		}
+	}
+
+	void show_result()
+	{
+		const auto lines = emilib::marching_squares(options.resolution, options.resolution, result.sdf.data());
+		const float lines_area = emilib::calc_area(lines.size() / 4, lines.data()) / sqr(options.resolution - 1);
+
+		ImGui::Text("%lu equations", result.field.eq.rhs.size());
+		ImGui::Text("%lu non-zero values in matrix", result.field.eq.triplets.size());
+		ImGui::Text("Calculated in %.3f s", result.duration_seconds);
+		ImGui::Text("Model area: %.3f, marching squares area: %.3f, sdf blob area: %.3f",
+			area(options.shapes), lines_area, result.blob_area);
+
+		ImGui::Checkbox("Input points", &draw_points);
+		ImGui::SameLine();
+		ImGui::Checkbox("Output blob", &draw_blob);
+
+		ImVec2 canvas_size{384, 384};
+		ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
+		ImGui::InvisibleButton("canvas", canvas_size);
+		show_cells(options, canvas_pos, canvas_size);
+		if (draw_points) { show_points(options, result.point_positions, result.point_normals, canvas_pos, canvas_size); }
+		if (draw_blob) { show_blob(options.resolution, lines, canvas_pos, canvas_size); }
+
+		show_texture_options(&sdf_texture);
+		blob_texture.set_params(sdf_texture.params());
+
+		// HACK to apply the params:
+		sdf_texture.bind(); blob_texture.bind();
+
+		ImGui::Image(reinterpret_cast<ImTextureID>(sdf_texture.id()), canvas_size);
+		ImGui::SameLine();
+		ImGui::Image(reinterpret_cast<ImTextureID>(blob_texture.id()), canvas_size);
+
+		if (ImGui::Button("Save images")) {
+			const auto res = options.resolution;
+			const bool alpha = false;
+			CHECK_F(emilib::write_tga("sdf.tga",  res, res, result.sdf_image.data(),  alpha));
+			CHECK_F(emilib::write_tga("blob.tga", res, res, result.blob_image.data(), alpha));
+		}
+	}
+};
+
+void show_sdf_fields()
+{
+	static FieldGui s_field_gui;
+
+	if (ImGui::Begin("Input")) {
+		s_field_gui.show_input();
+	}
+	ImGui::End();
+
+	if (ImGui::Begin("Result")) {
+		s_field_gui.show_result();
+	}
+	ImGui::End();
+}
+
 int main(int argc, char* argv[])
 {
 	loguru::g_colorlogtostderr = false;
@@ -611,19 +695,6 @@ int main(int argc, char* argv[])
 	emilib::ImGui_SDL imgui_sdl(sdl.width_points, sdl.height_points, sdl.pixels_per_point);
 
 	gl::bind_imgui_painting();
-
-	Options options;
-	auto result = generate(options);
-
-	gl::Texture sdf_texture{"sdf", gl::TexParams::clamped_nearest()};
-	gl::Texture blob_texture{"blob", gl::TexParams::clamped_nearest()};
-
-	const auto image_size = gl::Size{static_cast<unsigned>(options.resolution), static_cast<unsigned>(options.resolution)};
-	sdf_texture.set_data(result.sdf_image.data(),   image_size, gl::ImageFormat::RGBA32);
-	blob_texture.set_data(result.blob_image.data(), image_size, gl::ImageFormat::RGBA32);
-
-	bool draw_points = true;
-	bool draw_blob = true;
 
 	bool quit = false;
 	while (!quit) {
@@ -646,55 +717,7 @@ int main(int argc, char* argv[])
 		}
 		ImGui::End();
 
-		if (ImGui::Begin("Input")) {
-			if (showOptions(&options)) {
-				result = generate(options);
-				const auto image_size = gl::Size{static_cast<unsigned>(options.resolution), static_cast<unsigned>(options.resolution)};
-				sdf_texture.set_data(result.sdf_image.data(),   image_size, gl::ImageFormat::RGBA32);
-				blob_texture.set_data(result.blob_image.data(), image_size, gl::ImageFormat::RGBA32);
-			}
-		}
-		ImGui::End();
-
-		if (ImGui::Begin("Result")) {
-			const auto lines = emilib::marching_squares(options.resolution, options.resolution, result.sdf.data());
-			const float lines_area = emilib::calc_area(lines.size() / 4, lines.data()) / sqr(options.resolution - 1);
-
-			ImGui::Text("%lu equations", result.field.eq.rhs.size());
-			ImGui::Text("%lu non-zero values in matrix", result.field.eq.triplets.size());
-			ImGui::Text("Calculated in %.3f s", result.duration_seconds);
-			ImGui::Text("Model area: %.3f, marching squares area: %.3f, sdf blob area: %.3f",
-				area(options.shapes), lines_area, result.blob_area);
-
-			ImGui::Checkbox("Input points", &draw_points);
-			ImGui::SameLine();
-			ImGui::Checkbox("Output blob", &draw_blob);
-
-			ImVec2 canvas_size{384, 384};
-			ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
-			ImGui::InvisibleButton("canvas", canvas_size);
-			show_cells(options, canvas_pos, canvas_size);
-			if (draw_points) { show_points(options, result.point_positions, result.point_normals, canvas_pos, canvas_size); }
-			if (draw_blob) { show_blob(options.resolution, lines, canvas_pos, canvas_size); }
-
-			show_texture_options(&sdf_texture);
-			blob_texture.set_params(sdf_texture.params());
-
-			// HACK to apply the params:
-			sdf_texture.bind(); blob_texture.bind();
-
-			ImGui::Image(reinterpret_cast<ImTextureID>(sdf_texture.id()), canvas_size);
-			ImGui::SameLine();
-			ImGui::Image(reinterpret_cast<ImTextureID>(blob_texture.id()), canvas_size);
-
-			if (ImGui::Button("Save images")) {
-				const auto res = options.resolution;
-				const bool alpha = false;
-				CHECK_F(emilib::write_tga("sdf.tga",  res, res, result.sdf_image.data(),  alpha));
-				CHECK_F(emilib::write_tga("blob.tga", res, res, result.blob_image.data(), alpha));
-			}
-		}
-		ImGui::End();
+		show_sdf_fields();
 
 		glClearColor(0.1f, 0.1f, 0.1f, 0);
 		glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);

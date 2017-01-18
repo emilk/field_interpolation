@@ -48,13 +48,13 @@ void add_equation(
 /// Computed coefficients for multi-dimensional linear interpolation of 2^D neighbors.
 /// Returns false iff this is too close to, or outside of, a border.
 int multilerp(
-	int                     out_index[],
-	float                   out_weight[],
-	const std::vector<int>& sizes,
-	const float             in_pos[],
-	int                     extra_bound)
+	int                 out_index[],
+	float               out_weight[],
+	const LatticeField& field,
+	const float         in_pos[],
+	int                 extra_bound)
 {
-	int num_dim = sizes.size();
+	int num_dim = field.sizes.size();
 	CHECK_F(1 <= num_dim && num_dim <= MAX_DIM);
 	int floored[MAX_DIM];
 	float t[MAX_DIM];
@@ -68,16 +68,14 @@ int multilerp(
 
 	for (int i = 0; i < (1 << num_dim); ++i) {
 		int index = 0;
-		int stride = 1;
 		float weight = 1;
 		bool inside = true;
 		for (int d = 0; d < num_dim; ++d) {
 			const int set = (i >> d) & 1;
 			int dim_coord = floored[d] + set;
-			index  += stride * dim_coord;
+			index  += field.strides[d] * dim_coord;
 			weight *= (set ? t[d] : 1.0f - t[d]);
-			stride *= sizes[d];
-			inside &= (0 <= dim_coord && dim_coord + extra_bound < sizes[d]);
+			inside &= (0 <= dim_coord && dim_coord + extra_bound < field.sizes[d]);
 		}
 		if (inside) {
 			out_index[num_samples] = index;
@@ -93,19 +91,19 @@ bool add_value_constraint(
 	LatticeField* field,
 	const float   pos[],
 	float         value,
-	float         weight)
+	float         constraint_weight)
 {
-	if (weight == 0) { return false; }
+	if (constraint_weight == 0) { return false; }
 
 	int indices[TWO_TO_MAX_DIM];
 	float lerp_weights[TWO_TO_MAX_DIM];
-	int num_samples = multilerp(indices, lerp_weights, field->sizes, pos, 0);
+	int num_samples = multilerp(indices, lerp_weights, *field, pos, 0);
 	if (num_samples == 0) { return false; }
 
 	int row = field->eq.rhs.size();
 	float weight_sum = 0;
 	for (size_t i = 0; i < num_samples; ++i) {
-		float sample_weight = lerp_weights[i] * weight;
+		float sample_weight = lerp_weights[i] * constraint_weight;
 		field->eq.triplets.emplace_back(row, indices[i], sample_weight);
 		weight_sum += sample_weight;
 	}
@@ -118,9 +116,9 @@ bool add_gradient_constraint(
 	LatticeField* field,
 	const float   pos[],
 	const float   gradient[],
-	float         weight)
+	float         constraint_weight)
 {
-	if (weight == 0) { return false; }
+	if (constraint_weight == 0) { return false; }
 
 	/*
 	We spread the contribution using bilinear interpolation.
@@ -143,22 +141,21 @@ bool add_gradient_constraint(
 
 	int indices[TWO_TO_MAX_DIM];
 	float lerp_weights[TWO_TO_MAX_DIM];
-	int num_samples = multilerp(indices, lerp_weights, field->sizes, adjusted_pos, 1);
+	int num_samples = multilerp(indices, lerp_weights, *field, adjusted_pos, 1);
 	if (num_samples == 0) { return false; }
 
 	for (size_t i = 0; i < num_samples; ++i) {
-		int stride = 1;
 		for (int d = 0; d < num_dim; ++d) {
 			// d f(x, y) / dx = gradient[0]
 			// d f(x, y) / dy = gradient[1]
 			// ...
-			add_equation(&field->eq, Weight{weight * lerp_weights[i] / 2.0f}, Rhs{gradient[d]}, {
-				{indices[i] + 0,      -1.0f},
-				{indices[i] + stride, +1.0f},
+			add_equation(&field->eq, Weight{constraint_weight * lerp_weights[i] / 2.0f}, Rhs{gradient[d]}, {
+				{indices[i] + 0,                 -1.0f},
+				{indices[i] + field->strides[d], +1.0f},
 			});
-			stride *= field->sizes[d];
 		}
 	}
+
 	return true;
 }
 
@@ -168,10 +165,12 @@ void add_model_constraint(
 	const Weights& weights,
 	int            index,    // index of this value
 	int            dim_cord, // coordinate on this dimension
-	int            dim_size, // size of this dimension
-	int            stride)   // distance between adjacent element along this dimension
+	int            d)        // dimension
 {
-	if (0 <= dim_cord && dim_cord < dim_size) {
+	const int size   = field->sizes[d];
+	const int stride = field->strides[d];
+
+	if (0 <= dim_cord && dim_cord < size) {
 		// f(x) = 0
 		// Tikhonov diagonal regularization
 		add_equation(&field->eq, Weight{weights.model_0}, Rhs{0.0f}, {
@@ -179,7 +178,7 @@ void add_model_constraint(
 		});
 	}
 
-	if (0 <= dim_cord && dim_cord + 1 < dim_size) {
+	if (0 <= dim_cord && dim_cord + 1 < size) {
 		// f′(x) = 0   ⇔   f(x) = f(x + 1)
 		add_equation(&field->eq, Weight{weights.model_1 / 2.0f}, Rhs{0.0f}, {
 			{index + 0,      -1.0f},
@@ -187,7 +186,7 @@ void add_model_constraint(
 		});
 	}
 
-	if (1 <= dim_cord && dim_cord + 1 < dim_size) {
+	if (1 <= dim_cord && dim_cord + 1 < size) {
 		// f″(x) = 0   ⇔   f′(x - ½) = f′(x + ½)
 		add_equation(&field->eq, Weight{weights.model_2 / 4.0f}, Rhs{0.0f}, {
 			{index - stride, +1.0f},
@@ -196,7 +195,7 @@ void add_model_constraint(
 		});
 	}
 
-	if (2 <= dim_cord && dim_cord + 2 < dim_size) {
+	if (2 <= dim_cord && dim_cord + 2 < size) {
 		// f‴(x) = 0   ⇔   f″(x - 1) = f″(x + 1)
 		add_equation(&field->eq, Weight{weights.model_3 / 6.0f}, Rhs{0.0f}, {
 			{index - 2 * stride, +1.0f},
@@ -218,11 +217,11 @@ void add_field_constraints(
 	for (int index = 0; index < num_unknowns; ++index) {
 		int stride = 1;
 		int coordinate = index;
-		for (auto dimension_size : field->sizes) {
-			int dim_cord = coordinate % dimension_size;
-			add_model_constraint(field, weights, index, dim_cord, dimension_size, stride);
-			coordinate /= dimension_size;
-			stride *= dimension_size;
+		for (int d = 0; d < field->sizes.size(); ++d) {
+			int dim_cord = coordinate % field->sizes[d];
+			add_model_constraint(field, weights, index, dim_cord, d);
+			coordinate /= field->sizes[d];
+			stride *= field->sizes[d];
 		}
 	}
 }
