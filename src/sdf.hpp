@@ -56,10 +56,11 @@ extern bool g_alternative_gradient;
 ///     model_2 = constant_2 / resolution
 ///     model_3 = constant_3 / resolution^2
 /// Where resolution is e.g. the width of your lattice.
+/// Higher orders of smoothness increases the computational cost!
 struct Weights
 {
 	float data_pos      = 1.00f; // How much we trust the point value/position
-	float data_gradient = 0.10f; // How much we trust the point gradient/normal
+	float data_gradient = 1.00f; // How much we trust the point gradient/normal
 	// https://en.wikipedia.org/wiki/Smoothness#Order_of_continuity
 	float model_0       = 1e-6f; // How much we believe the field to be zero (regularization). If this is large everything will be zero.
 	float model_1       = 0.10f; // How much we believe the field to be uniform. If this is large you will take the average of the data.

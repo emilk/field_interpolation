@@ -25,13 +25,12 @@
 #include "serialize_configuru.hpp"
 #include "sparse_linear.hpp"
 
+VISITABLE_STRUCT(ImVec2, x, y);
 VISITABLE_STRUCT(Weights, data_pos, data_gradient, model_0, model_1, model_2, model_3);
 
 using namespace emilib::math;
 
-using Vec2 = ImVec2;
-
-using Vec2List = std::vector<Vec2>;
+using Vec2List = std::vector<ImVec2>;
 
 struct RGBA
 {
@@ -44,7 +43,7 @@ struct Shape
 	size_t num_points      = 64;
 	float  lopsidedness[2] = {1.0f, 1.0f};
 
-	float  center          =  0.5f;
+	ImVec2 center          = {0.5f, 0.5f};
 	float  radius          =  0.35f;
 
 	float  circleness      =  0;
@@ -128,7 +127,7 @@ auto poly_point(const Shape& shape, Dualf t) -> std::pair<Dualf, Dualf>
 	auto polygon_corner = [&](int corner) {
 		float angle = TAUf * corner / shape.polygon_sides;
 		angle += shape.rotation;
-		return Vec2(std::cos(angle), std::sin(angle));
+		return ImVec2(std::cos(angle), std::sin(angle));
 	};
 
 	int corner_0 = t.real * shape.polygon_sides;
@@ -160,7 +159,7 @@ auto shape_point(const Shape& shape, Dualf t)
 	dx /= normal_norm;
 	dy /= normal_norm;
 
-	return std::make_pair(Vec2(x.real, y.real), Vec2(dy, -dx));
+	return std::make_pair(ImVec2(x.real, y.real), ImVec2(dy, -dx));
 }
 
 void generate_points(
@@ -174,14 +173,11 @@ void generate_points(
 	size_t num_points = std::max(shape.num_points, min_points);
 
 	auto add_point_at = [&](float t) {
-		Vec2 pos, normal;
-		std::tie(pos, normal) = shape_point(shape, Dualf(t, 1.0f));
+		ImVec2 pos, normal;
+		std::tie(pos, normal) = shape_point(shape, sign * Dualf(t, 1.0f));
 
-		pos.x = shape.center + shape.radius * pos.x;
-		pos.y = shape.center + shape.radius * pos.y;
-
-		normal.x *= sign;
-		normal.y *= sign;
+		pos.x = shape.center.x + shape.radius * pos.x;
+		pos.y = shape.center.y + shape.radius * pos.y;
 
 		out_positions->emplace_back(pos);
 		if (out_normals) {
@@ -202,7 +198,6 @@ void generate_points(
 
 float area(const std::vector<Shape>& shapes)
 {
-	// TODO: calculate by oversampling + using calc_area in marching_cubes.hpp
 	double expected_area = 0;
 	for (const auto& shape : shapes) {
 		Vec2List positions;
@@ -227,7 +222,7 @@ auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Opti
 	const int width = options.resolution;
 	const int height = options.resolution;
 
-	static_assert(sizeof(Vec2) == 2 * sizeof(float), "Pack");
+	static_assert(sizeof(ImVec2) == 2 * sizeof(float), "Pack");
 	const auto field = sdf_from_points(
 		{width, height}, options.weights, positions.size(), &positions[0].x, &normals[0].x, nullptr);
 
@@ -275,7 +270,7 @@ Result generate(const Options& options)
 	Vec2List lattice_positions;
 
 	for (const auto& pos : result.point_positions) {
-		Vec2 on_lattice = pos;
+		ImVec2 on_lattice = pos;
 		on_lattice.x *= (resolution - 1.0f);
 		on_lattice.y *= (resolution - 1.0f);
 		lattice_positions.push_back(on_lattice);
@@ -322,12 +317,12 @@ bool show_shape_options(Shape* shape)
 	ImGui::Text("Shape:");
 	changed |= ImGui::Checkbox("inverted (hole)",   &shape->inverted);
     changed |= ImGuiPP::SliderSize("num_points",    &shape->num_points,    1, 1024, 2);
-    changed |= ImGui::SliderFloat("center",         &shape->center,        0,    1);
+    changed |= ImGui::SliderFloat2("lopsidedness",  shape->lopsidedness,   0,    2);
+    changed |= ImGui::SliderFloat2("center",        &shape->center.x,      0,    1);
     changed |= ImGui::SliderFloat("radius",         &shape->radius,        0,    1);
     changed |= ImGui::SliderFloat("circleness",     &shape->circleness,   -1,    5);
     changed |= ImGuiPP::SliderSize("polygon_sides", &shape->polygon_sides, 3,    8);
     changed |= ImGui::SliderAngle("rotation",       &shape->rotation,      0,  360);
-    changed |= ImGui::SliderFloat2("lopsidedness",  shape->lopsidedness,   0,    2);
     return changed;
 }
 
@@ -381,8 +376,8 @@ bool show_options(Options* options)
 		changed = true;
 	}
 	ImGui::Separator();
-	changed |= ImGui::SliderFloat("pos_noise", &options->pos_noise, 0, 0.1, "%.4f");
-	changed |= ImGui::SliderAngle("dir_noise", &options->dir_noise, 0,    360);
+	changed |= ImGui::SliderFloat("pos_noise", &options->pos_noise, 0,   0.1, "%.4f");
+	changed |= ImGui::SliderAngle("dir_noise", &options->dir_noise, 0, 360);
 	ImGui::Separator();
 	changed |= show_weights(&options->weights);
 	changed |= ImGui::Checkbox("Solve with double precision", &options->double_precision);
@@ -462,7 +457,7 @@ void show_points(const Options& options, const Vec2List& positions, const Vec2Li
 	}
 }
 
-void show_blob(
+void show_mesh(
 	size_t                    resolution,
 	const std::vector<float>& lines,
 	ImVec2                    canvas_pos,
@@ -684,9 +679,9 @@ void show_2d_field_window()
 
 struct FieldGui
 {
-	Options     options;
-	Result      result;
-	gl::Texture sdf_texture{ "sdf",  gl::TexParams::clamped_nearest()};
+	Options options;
+	Result result;
+	gl::Texture sdf_texture{"sdf", gl::TexParams::clamped_nearest()};
 	gl::Texture blob_texture{"blob", gl::TexParams::clamped_nearest()};
 	gl::Texture heatmap_texture{"heatmap", gl::TexParams::clamped_nearest()};
 	bool draw_points = true;
@@ -739,12 +734,14 @@ struct FieldGui
 			ImGui::Checkbox("Output normals", &draw_blob_normals);
 		}
 
-		ImVec2 canvas_size{384, 384};
+		ImVec2 available = ImGui::GetContentRegionAvail();
+		float image_width = std::floor(std::min(available.x / 2, (available.y - 64) / 2));
+		ImVec2 canvas_size{image_width, image_width};
 		ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
 		ImGui::InvisibleButton("canvas", canvas_size);
 		show_cells(options, canvas_pos, canvas_size);
 		if (draw_points) { show_points(options, result.point_positions, result.point_normals, canvas_pos, canvas_size); }
-		if (draw_blob) { show_blob(options.resolution, lines, canvas_pos, canvas_size, draw_blob_normals); }
+		if (draw_blob) { show_mesh(options.resolution, lines, canvas_pos, canvas_size, draw_blob_normals); }
 
 		blob_texture.set_params(sdf_texture.params());
 		heatmap_texture.set_params(sdf_texture.params());
@@ -761,13 +758,18 @@ struct FieldGui
 		ImGui::SameLine();
 		ImGui::Image(reinterpret_cast<ImTextureID>(blob_texture.id()), canvas_size);
 
-		show_texture_options(&sdf_texture);
+		ImGui::Text("Field min: %f, max: %f",
+			*min_element(result.sdf.begin(), result.sdf.end()),
+			*max_element(result.heatmap.begin(), result.heatmap.end()));
 
+		show_texture_options(&sdf_texture);
+		ImGui::SameLine();
 		if (ImGui::Button("Save images")) {
 			const auto res = options.resolution;
 			const bool alpha = false;
-			CHECK_F(emilib::write_tga("sdf.tga",  res, res, result.sdf_image.data(),  alpha));
-			CHECK_F(emilib::write_tga("blob.tga", res, res, result.blob_image.data(), alpha));
+			CHECK_F(emilib::write_tga("heatmap.tga", res, res, result.heatmap_image.data(), alpha));
+			CHECK_F(emilib::write_tga("sdf.tga",     res, res, result.sdf_image.data(),     alpha));
+			CHECK_F(emilib::write_tga("blob.tga",    res, res, result.blob_image.data(),    alpha));
 		}
 	}
 };

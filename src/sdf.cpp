@@ -206,6 +206,8 @@ void add_model_constraint(
 	const int size   = field->sizes[d];
 	const int stride = field->strides[d];
 
+	// TODO: dynamically compute Pascals triangle for this?
+
 	if (0 <= dim_cord && dim_cord < size) {
 		// f(x) = 0
 		// Tikhonov diagonal regularization

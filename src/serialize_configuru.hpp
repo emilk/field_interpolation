@@ -2,6 +2,7 @@
 #include <vector>
 
 #include <configuru.hpp>
+#include <loguru.hpp>
 #include <visit_struct/visit_struct.hpp>
 
 // ----------------------------------------------------------------------------
@@ -111,6 +112,10 @@ template<typename T>
 typename std::enable_if<is_container<T>::value>::type
 from_config(T* container, const configuru::Config& config)
 {
+	if (!config.is_array()) {
+		LOG_F(WARNING, "Failed to deserialize container");
+		return;
+	}
 	container->clear();
 	for (const auto& value : config.as_array()) {
 		container->push_back({});
@@ -122,6 +127,10 @@ template<typename T>
 typename std::enable_if<visit_struct::traits::is_visitable<T>::value>::type
 from_config(T* some_struct, const configuru::Config& config)
 {
+	if (!config.is_object()) {
+		LOG_F(WARNING, "Failed to deserialize container");
+		return;
+	}
 	visit_struct::apply_visitor([&config](const char* name, auto& value) {
 		if (config.has_key(name)) {
 			from_config(&value, config[name]);
