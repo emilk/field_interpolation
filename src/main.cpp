@@ -25,6 +25,8 @@
 #include "serialize_configuru.hpp"
 #include "sparse_linear.hpp"
 
+VISITABLE_STRUCT(Weights, data_pos, data_gradient, model_0, model_1, model_2, model_3);
+
 using namespace emilib::math;
 
 using Vec2 = ImVec2;
@@ -35,8 +37,6 @@ struct RGBA
 {
 	uint8_t r, g, b, a;
 };
-
-VISITABLE_STRUCT(Weights, data_pos, data_gradient, model_0, model_1, model_2, model_3);
 
 struct Shape
 {
@@ -173,8 +173,11 @@ void generate_points(
 		Vec2 pos, normal;
 		std::tie(pos, normal) = shape_point(shape, Dualf(t, 1.0f));
 
-		pos.x = shape.center + shape.radius * pos.x * sign;
-		pos.y = shape.center + shape.radius * pos.y * sign;
+		pos.x = shape.center + shape.radius * pos.x;
+		pos.y = shape.center + shape.radius * pos.y;
+
+		normal.x *= sign;
+		normal.y *= sign;
 
 		out_positions->emplace_back(pos);
 		if (out_normals) {
@@ -208,8 +211,7 @@ float area(const std::vector<Shape>& shapes)
 			line_segments.push_back(positions[(i + 1) % positions.size()].x);
 			line_segments.push_back(positions[(i + 1) % positions.size()].y);
 		}
-		float sign = (shape.inverted ? -1 : +1);
-		expected_area += sign * emilib::calc_area(line_segments.size() / 4, line_segments.data());
+		expected_area += emilib::calc_area(line_segments.size() / 4, line_segments.data());
 	}
 	return expected_area;
 }
@@ -331,6 +333,10 @@ bool show_weights(Weights* weights)
 
 	changed |= ImGui::Checkbox("alternative gradient interpolation", &g_alternative_gradient);
 
+	if (ImGui::Button("Reset weights")) {
+		*weights = {};
+		changed = true;
+	}
 	ImGui::Text("How much we trust the data:");
 	changed |= ImGui::SliderFloat("data_pos",      &weights->data_pos,      0, 10, "%.4f", 4);
 	changed |= ImGui::SliderFloat("data_gradient", &weights->data_gradient, 0, 10, "%.4f", 4);
@@ -497,53 +503,85 @@ void show_field_equations(const LatticeField& field)
 	ImGui::TextUnformatted(eq_str.c_str());
 }
 
-void show_1d_field_window()
+struct Point1D
 {
-	struct Point
-	{
-		float pos, value, gradient;
-		float value_weight, gradient_weight;
-	};
-	static std::vector<Point> s_points{
+	float pos, value, gradient;
+	float value_weight, gradient_weight;
+};
+VISITABLE_STRUCT(Point1D, pos, value, gradient, value_weight, gradient_weight);
+
+struct Field1DInput
+{
+	std::vector<Point1D> points{
 		{0.2f, 0, +1, 1, 1},
 		{0.8f, 0, -1, 1, 1},
 	};
 
-	static int     s_resolution = 12;
-	static Weights s_weights = [](){
-		Weights w;
-		w.model_1 = 0;
-		return w;
-	}();
+	int resolution = 12;
+	Weights weights;
+};
+VISITABLE_STRUCT(Field1DInput, points, resolution, weights);
 
-	s_points[1].pos = remap(std::sin(1.2f * emilib::Timer::seconds_since_startup()), -1, 1, 0.5, 0.7);
+Field1DInput load_1d_field()
+{
+	Field1DInput input;
+	if (fs::file_exists("1d_field.json")) {
+		const auto config = configuru::parse_file("1d_field.json", configuru::JSON);
+		from_config(&input, config);
+	}
+	return input;
+}
 
-	ImGui::SliderInt("resolution", &s_resolution, 4, 512);
-	show_weights(&s_weights);
+bool show_options(Field1DInput* input)
+{
+	bool changed = false;
 
-	for (const auto i : emilib::indices(s_points)) {
-		auto& point = s_points[i];
+	changed |= ImGui::SliderInt("resolution", &input->resolution, 4, 512);
+	changed |= show_weights(&input->weights);
+
+	for (const auto i : emilib::indices(input->points)) {
+		auto& point = input->points[i];
 		ImGui::PushID(i);
 		ImGui::Text("Point %lu:", i);
-		ImGui::SliderFloat("pos", &point.pos, 0, 1);
-		ImGui::SliderFloat("value", &point.value, 0, 1);
-		ImGui::SliderFloat("value_weight", &point.value_weight, 0, 1);
-		ImGui::SliderFloat("gradient", &point.gradient, -1, 1);
-		ImGui::SliderFloat("gradient_weight", &point.gradient_weight, 0, 1);
+		changed |= ImGui::SliderFloat("pos", &point.pos, 0, 1);
+		changed |= ImGui::SliderFloat("value", &point.value, 0, 1);
+		changed |= ImGui::SliderFloat("value_weight", &point.value_weight, 0, 1);
+		changed |= ImGui::SliderFloat("gradient", &point.gradient, -1, 1);
+		changed |= ImGui::SliderFloat("gradient_weight", &point.gradient_weight, 0, 1);
 		ImGui::PopID();
 	}
 
-	LatticeField field{{s_resolution}};
-	add_field_constraints(&field, s_weights);
+	if (input->points.size() >= 2 && ImGui::Button("Remove point")) {
+		input->points.pop_back();
+		changed = true;
+		ImGui::SameLine();
+	}
+	if (ImGui::Button("Add point")) {
+		auto point = input->points.back();
+		input->points.push_back(point);
+		changed = true;
+	}
 
-	for (const auto& point : s_points) {
-		float pos_lattice = point.pos * (s_resolution - 1);
-		float gradient_lattice = point.gradient / (s_resolution - 1);
+	return changed;
+}
+
+void show_1d_field_window(Field1DInput* input)
+{
+	if (show_options(input)) {
+		configuru::dump_file("1d_field.json", to_config(*input), configuru::JSON);
+	}
+
+	LatticeField field{{input->resolution}};
+	add_field_constraints(&field, input->weights);
+
+	for (const auto& point : input->points) {
+		float pos_lattice = point.pos * (input->resolution - 1);
+		float gradient_lattice = point.gradient / (input->resolution - 1);
 		add_value_constraint(&field, &pos_lattice, point.value, point.value_weight);
 		add_gradient_constraint(&field, &pos_lattice, &gradient_lattice, point.gradient_weight);
 	}
 
-	const size_t num_unknowns = s_resolution;
+	const size_t num_unknowns = input->resolution;
 	const bool double_precision = true;
 	auto interpolated =
 		solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs, double_precision);
@@ -571,13 +609,13 @@ void show_1d_field_window()
 
 	std::vector<ImVec2> field_points;
 	for (size_t i : emilib::indices(interpolated)) {
-		field_points.push_back(canvas_from_field(i / (s_resolution - 1.0f), interpolated[i]));
+		field_points.push_back(canvas_from_field(i / (input->resolution - 1.0f), interpolated[i]));
 		draw_list->AddCircleFilled(field_points.back(), 2, ImColor(1.0f, 1.0f, 1.0f, 1.0f));
 	}
 
 	draw_list->AddPolyline(field_points.data(), field_points.size(), ImColor(1.0f, 1.0f, 1.0f, 1.0f), false, 2, true);
 
-	for (const auto& point : s_points) {
+	for (const auto& point : input->points) {
 		float arrow_len = 64;
 		ImVec2 point_pos = canvas_from_field(point.pos, point.value);
 		draw_list->AddCircleFilled(point_pos, 5, ImColor(1.0f, 0.0f, 0.0f, 1.0f));
@@ -650,8 +688,8 @@ struct FieldGui
 
 	FieldGui()
 	{
-		if (fs::file_exists("field_gui.json")) {
-			const auto config = configuru::parse_file("field_gui.json", configuru::JSON);
+		if (fs::file_exists("sdf_input.json")) {
+			const auto config = configuru::parse_file("sdf_input.json", configuru::JSON);
 			from_config(&options, config);
 		}
 		calc();
@@ -671,7 +709,7 @@ struct FieldGui
 		if (show_options(&options)) {
 			calc();
 			const auto config = to_config(options);
-			configuru::dump_file("field_gui.json", config, configuru::JSON);
+			configuru::dump_file("sdf_input.json", config, configuru::JSON);
 		}
 	}
 
@@ -753,6 +791,7 @@ int main(int argc, char* argv[])
 	gl::bind_imgui_painting();
 
 	FieldGui field_gui;
+	Field1DInput field_1d_input = load_1d_field();
 
 	bool quit = false;
 	while (!quit) {
@@ -766,7 +805,7 @@ int main(int argc, char* argv[])
 		ImGui::ShowTestWindow();
 
 		if (ImGui::Begin("1D field interpolation")) {
-			show_1d_field_window();
+			show_1d_field_window(&field_1d_input);
 		}
 		ImGui::End();
 
