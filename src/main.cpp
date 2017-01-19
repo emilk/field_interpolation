@@ -105,8 +105,12 @@ std::vector<RGBA> generate_heatmap(const std::vector<float>& data, float min, fl
 
 	std::vector<RGBA> colors;
 	for (float value : data) {
-		int colormap_x = remap_clamp(value, min, max, 0, colormap_width - 1);
-		colors.emplace_back(colormap[colormap_x]);
+		if (max <= min) {
+			colors.emplace_back(RGBA{0,0,0,255});
+		} else {
+			int colormap_x = remap_clamp(value, min, max, 0, colormap_width - 1);
+			colors.emplace_back(colormap[colormap_x]);
+		}
 	}
 	return colors;
 }
@@ -338,13 +342,14 @@ bool show_weights(Weights* weights)
 		changed = true;
 	}
 	ImGui::Text("How much we trust the data:");
-	changed |= ImGui::SliderFloat("data_pos",      &weights->data_pos,      0, 10, "%.4f", 4);
-	changed |= ImGui::SliderFloat("data_gradient", &weights->data_gradient, 0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("data_pos",      &weights->data_pos,      0, 1000, "%.3f", 4);
+	changed |= ImGui::SliderFloat("data_gradient", &weights->data_gradient, 0, 1000, "%.3f", 4);
 	ImGui::Text("How much we trust the model:");
-	changed |= ImGui::SliderFloat("model_0 (regularization)", &weights->model_0, 0, 10, "%.4f", 4);
-	changed |= ImGui::SliderFloat("model_1 (flatness)",       &weights->model_1, 0, 10, "%.4f", 4);
-	changed |= ImGui::SliderFloat("model_2 (smoothness)",     &weights->model_2, 0, 10, "%.4f", 4);
-	changed |= ImGui::SliderFloat("model_3",                  &weights->model_3, 0, 10, "%.4f", 4);
+	changed |= ImGui::SliderFloat("model_0 (regularization)", &weights->model_0, 0, 1000, "%.3f", 4);
+	changed |= ImGui::SliderFloat("model_1 (flatness)",       &weights->model_1, 0, 1000, "%.3f", 4);
+	changed |= ImGui::SliderFloat("model_2 (smoothness)",     &weights->model_2, 0, 1000, "%.3f", 4);
+	changed |= ImGui::SliderFloat("model_3",                  &weights->model_3, 0, 1000, "%.3f", 4);
+	changed |= ImGui::SliderFloat("model_4",                  &weights->model_4, 0, 1000, "%.3f", 4);
 
 	return changed;
 }
@@ -506,15 +511,14 @@ void show_field_equations(const LatticeField& field)
 struct Point1D
 {
 	float pos, value, gradient;
-	float value_weight, gradient_weight;
 };
-VISITABLE_STRUCT(Point1D, pos, value, gradient, value_weight, gradient_weight);
+VISITABLE_STRUCT(Point1D, pos, value, gradient);
 
 struct Field1DInput
 {
 	std::vector<Point1D> points{
-		{0.2f, 0, +1, 1, 1},
-		{0.8f, 0, -1, 1, 1},
+		{0.2f, 0, +1},
+		{0.8f, 0, -1},
 	};
 
 	int resolution = 12;
@@ -542,12 +546,15 @@ bool show_options(Field1DInput* input)
 	for (const auto i : emilib::indices(input->points)) {
 		auto& point = input->points[i];
 		ImGui::PushID(i);
+		ImGui::PushItemWidth(ImGui::GetWindowContentRegionWidth() * 0.25f);
 		ImGui::Text("Point %lu:", i);
+		ImGui::SameLine();
 		changed |= ImGui::SliderFloat("pos", &point.pos, 0, 1);
+		ImGui::SameLine();
 		changed |= ImGui::SliderFloat("value", &point.value, 0, 1);
-		changed |= ImGui::SliderFloat("value_weight", &point.value_weight, 0, 1);
+		ImGui::SameLine();
 		changed |= ImGui::SliderFloat("gradient", &point.gradient, -1, 1);
-		changed |= ImGui::SliderFloat("gradient_weight", &point.gradient_weight, 0, 1);
+		ImGui::PopItemWidth();
 		ImGui::PopID();
 	}
 
@@ -577,8 +584,8 @@ void show_1d_field_window(Field1DInput* input)
 	for (const auto& point : input->points) {
 		float pos_lattice = point.pos * (input->resolution - 1);
 		float gradient_lattice = point.gradient / (input->resolution - 1);
-		add_value_constraint(&field, &pos_lattice, point.value, point.value_weight);
-		add_gradient_constraint(&field, &pos_lattice, &gradient_lattice, point.gradient_weight);
+		add_value_constraint(&field, &pos_lattice, point.value, input->weights.data_pos);
+		add_gradient_constraint(&field, &pos_lattice, &gradient_lattice, input->weights.data_gradient);
 	}
 
 	const size_t num_unknowns = input->resolution;
@@ -767,15 +774,17 @@ struct FieldGui
 
 void show_sdf_fields(FieldGui* field_gui)
 {
-	if (ImGui::Begin("Input")) {
+	if (ImGui::Begin("2D SDF")) {
+		ImGui::BeginChild("Input", ImVec2(ImGui::GetWindowContentRegionWidth() * 0.3f, 0), true);
 		field_gui->show_input();
-	}
-	ImGui::End();
+		ImGui::EndChild();
 
-	if (ImGui::Begin("Result")) {
+		ImGui::SameLine();
+
+		ImGui::BeginChild("Output", ImVec2(ImGui::GetWindowContentRegionWidth() * 0.7f, 0), true);
 		field_gui->show_result();
+		ImGui::EndChild();
 	}
-	ImGui::End();
 }
 
 int main(int argc, char* argv[])

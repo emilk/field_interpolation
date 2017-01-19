@@ -48,6 +48,7 @@ extern bool g_alternative_gradient;
 /// If your model is smooth, use a high model_2 and low everything else.
 /// If your data is trustworthy, you should lower the model weights (e.g. 1/10th of the data weights).
 /// If your data is noisy, you should use higher model weights.
+/// If your data is lopsided (a lot of points in one area, fewer in another) you should lower model_1.
 /// Note that if you increase the resolution of your lattice, you should modify the model weights.
 /// In particular:
 ///     model_0 = constant_0 * resolution
@@ -57,13 +58,14 @@ extern bool g_alternative_gradient;
 /// Where resolution is e.g. the width of your lattice.
 struct Weights
 {
-	float data_pos      = 1.00f; // How much we trust the point positions
-	float data_gradient = 1.00f; // How much we trust the point normals
+	float data_pos      = 1.00f; // How much we trust the point value/position
+	float data_gradient = 0.10f; // How much we trust the point gradient/normal
 	// https://en.wikipedia.org/wiki/Smoothness#Order_of_continuity
-	float model_0       = 1e-6f; // How much we believe the field to be zero (regularization).
-	float model_1       = 0.10f; // How much we believe the field to be uniform.
-	float model_2       = 1.00f; // How much we believe the field to be smooth.
-	float model_3       = 0.00f; // Another order of smoothness.
+	float model_0       = 1e-6f; // How much we believe the field to be zero (regularization). If this is large everything will be zero.
+	float model_1       = 0.10f; // How much we believe the field to be uniform. If this is large you will take the average of the data.
+	float model_2       = 1.00f; // How much we believe the field to be smooth. If this is large you will be fitting a line to the data.
+	float model_3       = 0.00f; // If this is large, you will be fitting a quadratic curve to you data.
+	float model_4       = 0.00f; // If this is large, you will be fitting a cubic curve to you data.
 };
 
 /// Sparse Ax=b where A is described by `triplets` and `rhs` is b.

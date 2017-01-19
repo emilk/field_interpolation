@@ -216,28 +216,39 @@ void add_model_constraint(
 
 	if (0 <= dim_cord && dim_cord + 1 < size) {
 		// f′(x) = 0   ⇔   f(x) = f(x + 1)
-		add_equation(&field->eq, Weight{weights.model_1 / 2.0f}, Rhs{0.0f}, {
-			{index + 0,      -1.0f},
-			{index + stride, +1.0f},
+		add_equation(&field->eq, Weight{weights.model_1}, Rhs{0.0f}, {
+			{index + 0 * stride, -1.0f},
+			{index + 1 * stride, +1.0f},
 		});
 	}
 
-	if (1 <= dim_cord && dim_cord + 1 < size) {
+	if (0 <= dim_cord && dim_cord + 2 < size) {
 		// f″(x) = 0   ⇔   f′(x - ½) = f′(x + ½)
-		add_equation(&field->eq, Weight{weights.model_2 / 4.0f}, Rhs{0.0f}, {
-			{index - stride, +1.0f},
-			{index + 0,      -2.0f},
-			{index + stride, +1.0f},
+		add_equation(&field->eq, Weight{weights.model_2}, Rhs{0.0f}, {
+			{index + 0 * stride, +1.0f},
+			{index + 1 * stride, -2.0f},
+			{index + 2 * stride, +1.0f},
 		});
 	}
 
-	if (2 <= dim_cord && dim_cord + 2 < size) {
-		// f‴(x) = 0   ⇔   f″(x - 1) = f″(x + 1)
-		add_equation(&field->eq, Weight{weights.model_3 / 6.0f}, Rhs{0.0f}, {
-			{index - 2 * stride, +1.0f},
-			{index - 1 * stride, -2.0f},
-			{index + 1 * stride, +2.0f},
-			{index + 2 * stride, -1.0f},
+	if (0 <= dim_cord && dim_cord + 3 < size) {
+		// f‴(x) = 0   ⇔   f″(x - ½) = f″(x + ½)
+		add_equation(&field->eq, Weight{weights.model_3}, Rhs{0.0f}, {
+			{index + 0 * stride, +1.0f},
+			{index + 1 * stride, -3.0f},
+			{index + 2 * stride, +3.0f},
+			{index + 3 * stride, -1.0f},
+		});
+	}
+
+	if (0 <= dim_cord && dim_cord + 4 < size) {
+		// f⁗(x) = 0   ⇔   f‴(x - ½) = f‴(x + ½)
+		add_equation(&field->eq, Weight{weights.model_4}, Rhs{0.0f}, {
+			{index + 0 * stride, +1.0f},
+			{index + 1 * stride, -4.0f},
+			{index + 2 * stride, +6.0f},
+			{index + 3 * stride, -4.0f},
+			{index + 4 * stride, +1.0f},
 		});
 	}
 }
