@@ -6,6 +6,7 @@
 #include <stb/stb_image.h>
 
 #include <emilib/dual.hpp>
+#include <emilib/file_system.hpp>
 #include <emilib/gl_lib.hpp>
 #include <emilib/gl_lib_opengl.hpp>
 #include <emilib/gl_lib_sdl.hpp>
@@ -21,6 +22,7 @@
 #include <loguru.hpp>
 
 #include "sdf.hpp"
+#include "serialize_configuru.hpp"
 #include "sparse_linear.hpp"
 
 using namespace emilib::math;
@@ -33,6 +35,8 @@ struct RGBA
 {
 	uint8_t r, g, b, a;
 };
+
+VISITABLE_STRUCT(Weights, data_pos, data_gradient, model_0, model_1, model_2, model_3);
 
 struct Shape
 {
@@ -48,6 +52,8 @@ struct Shape
 
 	float  rotation        =  0;
 };
+
+VISITABLE_STRUCT(Shape, inverted, num_points, lopsidedness, center, radius, circleness, polygon_sides, rotation);
 
 struct Options
 {
@@ -71,6 +77,8 @@ struct Options
 		}
 	}
 };
+
+VISITABLE_STRUCT(Options, seed, resolution, shapes, pos_noise, dir_noise, weights, double_precision);
 
 struct Result
 {
@@ -142,9 +150,6 @@ auto shape_point(const Shape& shape, Dualf t)
 	Dualf x = lerp(poly_x, circle_x, shape.circleness);
 	Dualf y = lerp(poly_y, circle_y, shape.circleness);
 
-	x = shape.center + shape.radius * x;
-	y = shape.center + shape.radius * y;
-
 	float dx = x.eps;
 	float dy = y.eps;
 	float normal_norm = std::hypot(dx, dy);
@@ -166,7 +171,10 @@ void generate_points(
 
 	auto add_point_at = [&](float t) {
 		Vec2 pos, normal;
-		std::tie(pos, normal) = shape_point(shape, sign * Dualf(t, 1.0f));
+		std::tie(pos, normal) = shape_point(shape, Dualf(t, 1.0f));
+
+		pos.x = shape.center + shape.radius * pos.x * sign;
+		pos.y = shape.center + shape.radius * pos.y * sign;
 
 		out_positions->emplace_back(pos);
 		if (out_normals) {
@@ -200,7 +208,8 @@ float area(const std::vector<Shape>& shapes)
 			line_segments.push_back(positions[(i + 1) % positions.size()].x);
 			line_segments.push_back(positions[(i + 1) % positions.size()].y);
 		}
-		expected_area += emilib::calc_area(line_segments.size() / 4, line_segments.data());
+		float sign = (shape.inverted ? -1 : +1);
+		expected_area += sign * emilib::calc_area(line_segments.size() / 4, line_segments.data());
 	}
 	return expected_area;
 }
@@ -306,14 +315,14 @@ bool show_shape_options(Shape* shape)
 
 	ImGui::Text("Shape:");
 	changed |= ImGui::Checkbox("inverted (hole)",   &shape->inverted);
-	changed |= ImGuiPP::SliderSize("num_points",    &shape->num_points,  1, 1024, 2);
-	changed |= ImGui::SliderFloat("center",         &shape->center,      0,    1);
-	changed |= ImGui::SliderFloat("radius",         &shape->radius,      0,    1);
-	changed |= ImGui::SliderFloat("circleness",     &shape->circleness, -2,       3);
-	changed |= ImGuiPP::SliderSize("polygon_sides", &shape->polygon_sides, 3,     8);
-	changed |= ImGui::SliderAngle("rotation",       &shape->rotation,    0,  360);
-	changed |= ImGui::SliderFloat2("lopsidedness",  shape->lopsidedness,   0,     2);
-	return changed;
+    changed |= ImGuiPP::SliderSize("num_points",    &shape->num_points,    1, 1024, 2);
+    changed |= ImGui::SliderFloat("center",         &shape->center,        0,    1);
+    changed |= ImGui::SliderFloat("radius",         &shape->radius,        0,    1);
+    changed |= ImGui::SliderFloat("circleness",     &shape->circleness,   -1,    5);
+    changed |= ImGuiPP::SliderSize("polygon_sides", &shape->polygon_sides, 3,    8);
+    changed |= ImGui::SliderAngle("rotation",       &shape->rotation,      0,  360);
+    changed |= ImGui::SliderFloat2("lopsidedness",  shape->lopsidedness,   0,    2);
+    return changed;
 }
 
 bool show_weights(Weights* weights)
@@ -442,7 +451,12 @@ void show_points(const Options& options, const Vec2List& positions, const Vec2Li
 	}
 }
 
-void show_blob(size_t resolution, const std::vector<float>& lines, ImVec2 canvas_pos, ImVec2 canvas_size)
+void show_blob(
+	size_t                    resolution,
+	const std::vector<float>& lines,
+	ImVec2                    canvas_pos,
+	ImVec2                    canvas_size,
+	bool                      draw_blob_normals)
 {
 	ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
@@ -460,16 +474,17 @@ void show_blob(size_t resolution, const std::vector<float>& lines, ImVec2 canvas
 		y1 = canvas_pos.y + canvas_size.y * (y1 / (resolution - 1.0f));
 
 		draw_list->AddLine({x0, y0}, {x1, y1}, ImColor(1.0f, 0.0f, 0.0f, 1.0f));
-#if 1
-		float cx = (x0 + x1) / 2;
-		float cy = (y0 + y1) / 2;
-		float dx = (x1 - x0);
-		float dy = (y1 - y0);
-		float norm = 10 / std::hypot(dx, dy);
-		dx *= norm;
-		dy *= norm;
-		draw_list->AddLine({cx, cy}, {cx + dy, cy - dx}, ImColor(0.0f, 1.0f, 0.0f, 1.0f));
-#endif
+
+		if (draw_blob_normals) {
+			float cx = (x0 + x1) / 2;
+			float cy = (y0 + y1) / 2;
+			float dx = (x1 - x0);
+			float dy = (y1 - y0);
+			float norm = 10 / std::hypot(dx, dy);
+			dx *= norm;
+			dy *= norm;
+			draw_list->AddLine({cx, cy}, {cx + dy, cy - dx}, ImColor(0.0f, 1.0f, 0.0f, 1.0f));
+		}
 	}
 }
 
@@ -631,9 +646,14 @@ struct FieldGui
 	gl::Texture heatmap_texture{"heatmap", gl::TexParams::clamped_nearest()};
 	bool draw_points = true;
 	bool draw_blob = true;
+	bool draw_blob_normals = true;
 
 	FieldGui()
 	{
+		if (fs::file_exists("field_gui.json")) {
+			const auto config = configuru::parse_file("field_gui.json", configuru::JSON);
+			from_config(&options, config);
+		}
 		calc();
 	}
 
@@ -650,6 +670,8 @@ struct FieldGui
 	{
 		if (show_options(&options)) {
 			calc();
+			const auto config = to_config(options);
+			configuru::dump_file("field_gui.json", config, configuru::JSON);
 		}
 	}
 
@@ -667,13 +689,17 @@ struct FieldGui
 		ImGui::Checkbox("Input points", &draw_points);
 		ImGui::SameLine();
 		ImGui::Checkbox("Output blob", &draw_blob);
+		if (draw_blob) {
+			ImGui::SameLine();
+			ImGui::Checkbox("Output normals", &draw_blob_normals);
+		}
 
 		ImVec2 canvas_size{384, 384};
 		ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
 		ImGui::InvisibleButton("canvas", canvas_size);
 		show_cells(options, canvas_pos, canvas_size);
 		if (draw_points) { show_points(options, result.point_positions, result.point_normals, canvas_pos, canvas_size); }
-		if (draw_blob) { show_blob(options.resolution, lines, canvas_pos, canvas_size); }
+		if (draw_blob) { show_blob(options.resolution, lines, canvas_pos, canvas_size, draw_blob_normals); }
 
 		blob_texture.set_params(sdf_texture.params());
 		heatmap_texture.set_params(sdf_texture.params());
@@ -701,17 +727,15 @@ struct FieldGui
 	}
 };
 
-void show_sdf_fields()
+void show_sdf_fields(FieldGui* field_gui)
 {
-	static FieldGui s_field_gui;
-
 	if (ImGui::Begin("Input")) {
-		s_field_gui.show_input();
+		field_gui->show_input();
 	}
 	ImGui::End();
 
 	if (ImGui::Begin("Result")) {
-		s_field_gui.show_result();
+		field_gui->show_result();
 	}
 	ImGui::End();
 }
@@ -720,16 +744,15 @@ int main(int argc, char* argv[])
 {
 	loguru::g_colorlogtostderr = false;
 	loguru::init(argc, argv);
-
 	emilib::sdl::Params sdl_params;
 	sdl_params.window_name = "2D SDF generator";
 	sdl_params.width_points = 1800;
 	sdl_params.height_points = 1200;
 	auto sdl = emilib::sdl::init(sdl_params);
-
 	emilib::ImGui_SDL imgui_sdl(sdl.width_points, sdl.height_points, sdl.pixels_per_point);
-
 	gl::bind_imgui_painting();
+
+	FieldGui field_gui;
 
 	bool quit = false;
 	while (!quit) {
@@ -752,7 +775,7 @@ int main(int argc, char* argv[])
 		}
 		ImGui::End();
 
-		show_sdf_fields();
+		show_sdf_fields(&field_gui);
 
 		glClearColor(0.1f, 0.1f, 0.1f, 0);
 		glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);

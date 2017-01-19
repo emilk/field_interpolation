@@ -7,3 +7,6 @@
 [submodule "libs/stb"]
 	path = libs/stb
 	url = git@github.com:nothings/stb.git
+[submodule "libs/visit_struct"]
+	path = libs/visit_struct
+	url = git@github.com:cbeck88/visit_struct.git

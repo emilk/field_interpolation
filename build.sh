@@ -13,7 +13,7 @@ mkdir -p build
 CXX=g++
 CPPFLAGS="--std=c++14 -Wall -Wpedantic -Wno-gnu-zero-variadic-macro-arguments -g -DNDEBUG"
 CPPFLAGS="$CPPFLAGS -O2"
-COMPILE_FLAGS="$CPPFLAGS -I libs -I libs/emilib"
+COMPILE_FLAGS="$CPPFLAGS -I libs -I libs/emilib -I libs/visit_struct/include"
 LDLIBS="-lstdc++ -lpthread -ldl"
 LDLIBS="$LDLIBS -lSDL2 -lGLEW"
 # LDLIBS="$LDLIBS -ljemalloc"
