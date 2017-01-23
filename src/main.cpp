@@ -63,7 +63,7 @@ struct Options
 	float              pos_noise        =  0.005f;
 	float              dir_noise        =  0.05f;
 	Weights            weights;
-	bool               double_precision = true;
+	bool               double_precision = false;
 
 	Options()
 	{
@@ -414,19 +414,6 @@ void show_cells(const Options& options, ImVec2 canvas_pos, ImVec2 canvas_size)
 {
 	ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-	// Draw "voxel" sides
-	// for (size_t i : emilib::irange<size_t>(0, options.resolution - 1)) {
-	// 	const float left   = canvas_pos.x;
-	// 	const float right  = canvas_pos.x + canvas_size.x;
-	// 	const float top    = canvas_pos.y;
-	// 	const float bottom = canvas_pos.y + canvas_size.y;
-	// 	const float center_f = static_cast<float>(i + 0.5f) / (options.resolution - 1.0f);
-	// 	const float center_x = canvas_pos.x + canvas_size.x * center_f;
-	// 	const float center_y = canvas_pos.y + canvas_size.y * center_f;
-	// 	draw_list->AddLine({left, center_y}, {right, center_y}, ImColor(1.0f, 1.0f, 1.0f, 0.25f));
-	// 	draw_list->AddLine({center_x, top}, {center_x, bottom}, ImColor(1.0f, 1.0f, 1.0f, 0.25f));
-	// }
-
 	if (options.resolution < 64) {
 		// Draw sample points
 		for (size_t xi : emilib::irange<size_t>(0, options.resolution)) {
@@ -586,7 +573,7 @@ void show_1d_field_window(Field1DInput* input)
 	add_field_constraints(&field, input->weights);
 
 	const size_t num_unknowns = input->resolution;
-	const bool double_precision = true;
+	const bool double_precision = false;
 	auto interpolated =
 		solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs, double_precision);
 	if (interpolated.size() != num_unknowns) {
@@ -665,7 +652,7 @@ void show_2d_field_window()
 	}
 
 	const size_t num_unknowns = s_resolution * s_resolution;
-	const bool double_precision = true;
+	const bool double_precision = false;
 	auto interpolated =
 		solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs, double_precision);
 	if (interpolated.size() != num_unknowns) {
@@ -695,7 +682,7 @@ struct FieldGui
 	bool draw_cells = true;
 	bool dual_contouring = false;
 	bool draw_blob = true;
-	bool draw_blob_normals = true;
+	bool draw_blob_normals = false;
 
 	FieldGui()
 	{
