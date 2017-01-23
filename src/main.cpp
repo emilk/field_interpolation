@@ -21,6 +21,7 @@
 #include <emilib/timer.hpp>
 #include <loguru.hpp>
 
+#include "dual_contouring_2d.hpp"
 #include "sdf.hpp"
 #include "serialize_configuru.hpp"
 #include "sparse_linear.hpp"
@@ -316,14 +317,14 @@ bool show_shape_options(Shape* shape)
 
 	ImGui::Text("Shape:");
 	changed |= ImGui::Checkbox("inverted (hole)",   &shape->inverted);
-    changed |= ImGuiPP::SliderSize("num_points",    &shape->num_points,    1, 1024, 2);
-    changed |= ImGui::SliderFloat2("lopsidedness",  shape->lopsidedness,   0,    2);
-    changed |= ImGui::SliderFloat2("center",        &shape->center.x,      0,    1);
-    changed |= ImGui::SliderFloat("radius",         &shape->radius,        0,    1);
-    changed |= ImGui::SliderFloat("circleness",     &shape->circleness,   -1,    5);
-    changed |= ImGuiPP::SliderSize("polygon_sides", &shape->polygon_sides, 3,    8);
-    changed |= ImGui::SliderAngle("rotation",       &shape->rotation,      0,  360);
-    return changed;
+	changed |= ImGuiPP::SliderSize("num_points",    &shape->num_points,    1, 1024, 2);
+	changed |= ImGui::SliderFloat2("lopsidedness",  shape->lopsidedness,   0,    2);
+	changed |= ImGui::SliderFloat2("center",        &shape->center.x,      0,    1);
+	changed |= ImGui::SliderFloat("radius",         &shape->radius,        0,    1);
+	changed |= ImGui::SliderFloat("circleness",     &shape->circleness,   -1,    5);
+	changed |= ImGuiPP::SliderSize("polygon_sides", &shape->polygon_sides, 3,    8);
+	changed |= ImGui::SliderAngle("rotation",       &shape->rotation,      0,  360);
+	return changed;
 }
 
 bool show_weights(Weights* weights)
@@ -414,17 +415,17 @@ void show_cells(const Options& options, ImVec2 canvas_pos, ImVec2 canvas_size)
 	ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
 	// Draw "voxel" sides
-	for (size_t i : emilib::irange<size_t>(0, options.resolution - 1)) {
-		const float left   = canvas_pos.x;
-		const float right  = canvas_pos.x + canvas_size.x;
-		const float top    = canvas_pos.y;
-		const float bottom = canvas_pos.y + canvas_size.y;
-		const float center_f = static_cast<float>(i + 0.5f) / (options.resolution - 1.0f);
-		const float center_x = canvas_pos.x + canvas_size.x * center_f;
-		const float center_y = canvas_pos.y + canvas_size.y * center_f;
-		draw_list->AddLine({left, center_y}, {right, center_y}, ImColor(1.0f, 1.0f, 1.0f, 0.25f));
-		draw_list->AddLine({center_x, top}, {center_x, bottom}, ImColor(1.0f, 1.0f, 1.0f, 0.25f));
-	}
+	// for (size_t i : emilib::irange<size_t>(0, options.resolution - 1)) {
+	// 	const float left   = canvas_pos.x;
+	// 	const float right  = canvas_pos.x + canvas_size.x;
+	// 	const float top    = canvas_pos.y;
+	// 	const float bottom = canvas_pos.y + canvas_size.y;
+	// 	const float center_f = static_cast<float>(i + 0.5f) / (options.resolution - 1.0f);
+	// 	const float center_x = canvas_pos.x + canvas_size.x * center_f;
+	// 	const float center_y = canvas_pos.y + canvas_size.y * center_f;
+	// 	draw_list->AddLine({left, center_y}, {right, center_y}, ImColor(1.0f, 1.0f, 1.0f, 0.25f));
+	// 	draw_list->AddLine({center_x, top}, {center_x, bottom}, ImColor(1.0f, 1.0f, 1.0f, 0.25f));
+	// }
 
 	if (options.resolution < 64) {
 		// Draw sample points
@@ -691,6 +692,8 @@ struct FieldGui
 	gl::Texture blob_texture{"blob", gl::TexParams::clamped_nearest()};
 	gl::Texture heatmap_texture{"heatmap", gl::TexParams::clamped_nearest()};
 	bool draw_points = true;
+	bool draw_cells = true;
+	bool dual_contouring = false;
 	bool draw_blob = true;
 	bool draw_blob_normals = true;
 
@@ -723,7 +726,23 @@ struct FieldGui
 
 	void show_result()
 	{
-		const auto lines = emilib::marching_squares(options.resolution, options.resolution, result.sdf.data());
+		std::vector<float> lines;
+		if (dual_contouring) {
+			std::vector<dc::Vec2> gradients(options.resolution * options.resolution);
+			dc::calculate_gradients(gradients.data(), options.resolution, options.resolution, result.sdf.data());
+
+			std::vector<dc::Vec2> vertices;
+			std::vector<dc::Index> line_segments;
+			dc::dual_contouring_2d(&vertices, &line_segments, options.resolution,
+				options.resolution, result.sdf.data(), gradients.data());
+
+			for (auto index : line_segments) {
+				lines.push_back(vertices[index].x);
+				lines.push_back(vertices[index].y);
+			}
+		} else {
+			lines = emilib::marching_squares(options.resolution, options.resolution, result.sdf.data());
+		}
 		const float lines_area = emilib::calc_area(lines.size() / 4, lines.data()) / sqr(options.resolution - 1);
 
 		ImGui::Text("%lu equations", result.field.eq.rhs.size());
@@ -733,6 +752,10 @@ struct FieldGui
 			area(options.shapes), lines_area, result.blob_area);
 
 		ImGui::Checkbox("Input points", &draw_points);
+		ImGui::SameLine();
+		ImGui::Checkbox("Input cells", &draw_cells);
+		ImGui::SameLine();
+		ImGui::Checkbox("Dual contouring", &dual_contouring);
 		ImGui::SameLine();
 		ImGui::Checkbox("Output blob", &draw_blob);
 		if (draw_blob) {
@@ -745,7 +768,7 @@ struct FieldGui
 		ImVec2 canvas_size{image_width, image_width};
 		ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
 		ImGui::InvisibleButton("canvas", canvas_size);
-		show_cells(options, canvas_pos, canvas_size);
+		if (draw_cells) { show_cells(options, canvas_pos, canvas_size); }
 		if (draw_points) { show_points(options, result.point_positions, result.point_normals, canvas_pos, canvas_size); }
 		if (draw_blob) { show_mesh(options.resolution, lines, canvas_pos, canvas_size, draw_blob_normals); }
 

@@ -11,17 +11,21 @@ bool g_nn_gradient = false;
 
 std::ostream& operator<<(std::ostream& os, const LinearEquation& eq)
 {
-	const int num_rows = eq.rhs.size();
+	const size_t num_rows = eq.rhs.size();
 	std::vector<std::vector<Triplet>> row_triplets(num_rows);
 
 	for (const auto& triplet : eq.triplets) {
 		row_triplets[triplet.row].push_back(triplet);
 	}
 
-	for (int i = 0; i < num_rows; ++i) {
-		os << eq.rhs[i] << " = ";
-		for (const auto& triplet : row_triplets[i]) {
-			os << triplet.value << " * x" << triplet.col << "  +  ";
+	for (size_t row = 0; row < num_rows; ++row) {
+		os << eq.rhs[row] << " = ";
+		for (size_t triplet_idx = 0; triplet_idx < row_triplets[row].size(); ++triplet_idx) {
+			const auto& triplet = row_triplets[row][triplet_idx];
+			os << triplet.value << " * x" << triplet.col;
+			if (triplet_idx + 1 < row_triplets[row].size()) {
+				os  << "  +  ";
+			}
 		}
 		os << "\n";
 	}
