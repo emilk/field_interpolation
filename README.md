@@ -16,20 +16,22 @@ More info coming soon.
 * Take sparse samples or noisy samples of a signal and generate a dense Look-Up Table (LUT) with smoothly interpolated values.
 
 # Future improvmenets
-* Generalize to non-scalar fields.
+* Generalize to non-scalar fields (e.g. RGB).
+
 
 # TODO
-* Name this method and library
+* Name this method and library. Finite Element Interpolation ? emilerp?
 
 ## Algo
 * Add nearest-neighbor versions, mostly to make them easy to read and comprehend.
 * Try dual contouring
+* Figure out the correct approach to gradients. Sqrt? Single-equation? Summed the sqrt weight? Etc.
+
+## Speeding up
+* Coarse first, scale up, re-run on elements with large errors, keep smooth fixed (sparse)
+* Coarse first, scale up, improve with gauss-siedel or Conjugate Gradient
 
 ## Gui
 * Use 1D to verify iso-surface positioning is perfect
-* Visualize certainty (abs-gradient should be 1.0 if trustable)
 * Split back-projected error into model and data constraints.
-* More points in 1D view
-* Remove g_alternative_gradient hack
-* Improve the GUI
 * Add several saved configs for distance field tab

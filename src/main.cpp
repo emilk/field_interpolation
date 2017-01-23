@@ -169,12 +169,12 @@ void generate_points(
 	size_t       min_points)
 {
 	CHECK_NOTNULL_F(out_positions);
-	float sign = shape.inverted ? -1 : +1;
 	size_t num_points = std::max(shape.num_points, min_points);
 
 	auto add_point_at = [&](float t) {
 		ImVec2 pos, normal;
-		std::tie(pos, normal) = shape_point(shape, sign * Dualf(t, 1.0f));
+		auto td = shape.inverted ? Dualf(1.0f - t, -1.0f) : Dualf(t, 1.0f);
+		std::tie(pos, normal) = shape_point(shape, td);
 
 		pos.x = shape.center.x + shape.radius * pos.x;
 		pos.y = shape.center.y + shape.radius * pos.y;
@@ -330,7 +330,7 @@ bool show_weights(Weights* weights)
 {
 	bool changed = false;
 
-	changed |= ImGui::Checkbox("alternative gradient interpolation", &g_alternative_gradient);
+	changed |= ImGui::Checkbox("nearest-neighbor gradient interpolation", &g_nn_gradient);
 
 	if (ImGui::Button("Reset weights")) {
 		*weights = {};
@@ -340,11 +340,11 @@ bool show_weights(Weights* weights)
 	changed |= ImGui::SliderFloat("data_pos",      &weights->data_pos,      0, 1000, "%.3f", 4);
 	changed |= ImGui::SliderFloat("data_gradient", &weights->data_gradient, 0, 1000, "%.3f", 4);
 	ImGui::Text("How much we trust the model:");
-	changed |= ImGui::SliderFloat("model_0 (regularization)", &weights->model_0, 0, 1000, "%.3f", 4);
-	changed |= ImGui::SliderFloat("model_1 (flatness)",       &weights->model_1, 0, 1000, "%.3f", 4);
-	changed |= ImGui::SliderFloat("model_2 (smoothness)",     &weights->model_2, 0, 1000, "%.3f", 4);
-	changed |= ImGui::SliderFloat("model_3",                  &weights->model_3, 0, 1000, "%.3f", 4);
-	changed |= ImGui::SliderFloat("model_4",                  &weights->model_4, 0, 1000, "%.3f", 4);
+	changed |= ImGui::SliderFloat("f(0) = 0 (regularization)",    &weights->model_0, 0, 1000, "%.3f", 4);
+	changed |= ImGui::SliderFloat("f'(0) = 0 (flatness)",         &weights->model_1, 0, 1000, "%.3f", 4);
+	changed |= ImGui::SliderFloat("f''(0) = 0 (C1 smoothness)",   &weights->model_2, 0, 1000, "%.3f", 4);
+	changed |= ImGui::SliderFloat("f'''(0) = 0 (C2 smoothness)",  &weights->model_3, 0, 1000, "%.3f", 4);
+	changed |= ImGui::SliderFloat("f''''(0) = 0 (C3 smoothness)", &weights->model_4, 0, 1000, "%.3f", 4);
 
 	return changed;
 }
@@ -574,7 +574,6 @@ void show_1d_field_window(Field1DInput* input)
 	}
 
 	LatticeField field{{input->resolution}};
-	add_field_constraints(&field, input->weights);
 
 	for (const auto& point : input->points) {
 		float pos_lattice = point.pos * (input->resolution - 1);
@@ -582,6 +581,8 @@ void show_1d_field_window(Field1DInput* input)
 		add_value_constraint(&field, &pos_lattice, point.value, input->weights.data_pos);
 		add_gradient_constraint(&field, &pos_lattice, &gradient_lattice, input->weights.data_gradient);
 	}
+
+	add_field_constraints(&field, input->weights);
 
 	const size_t num_unknowns = input->resolution;
 	const bool double_precision = true;
@@ -618,11 +619,16 @@ void show_1d_field_window(Field1DInput* input)
 	draw_list->AddPolyline(field_points.data(), field_points.size(), ImColor(1.0f, 1.0f, 1.0f, 1.0f), false, 2, true);
 
 	for (const auto& point : input->points) {
-		float arrow_len = 64;
+		float arrow_len = 16;
 		ImVec2 point_pos = canvas_from_field(point.pos, point.value);
 		draw_list->AddCircleFilled(point_pos, 5, ImColor(1.0f, 0.0f, 0.0f, 1.0f));
-		draw_list->AddLine(point_pos, point_pos + ImVec2{arrow_len, arrow_len * -point.gradient}, 3, ImColor(1.5f, 0.0f, 0.0f, 0.5f));
+		if (input->weights.data_gradient > 0) {
+			ImVec2 gradient_offset = {arrow_len, -point.gradient * arrow_len};
+			draw_list->AddLine(point_pos - gradient_offset, point_pos + gradient_offset, ImColor(1.0f, 0.0f, 0.0f, 0.5f), 2);
+		}
 	}
+
+	show_field_equations(field);
 }
 
 void show_2d_field_window()
@@ -787,6 +793,7 @@ void show_sdf_fields(FieldGui* field_gui)
 		field_gui->show_result();
 		ImGui::EndChild();
 	}
+	ImGui::End();
 }
 
 int main(int argc, char* argv[])

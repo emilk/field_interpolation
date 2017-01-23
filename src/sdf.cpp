@@ -7,7 +7,7 @@
 
 const int TWO_TO_MAX_DIM = (1 << 4);
 
-bool g_alternative_gradient = true;
+bool g_nn_gradient = false;
 
 std::ostream& operator<<(std::ostream& os, const LinearEquation& eq)
 {
@@ -123,45 +123,59 @@ bool add_gradient_constraint(
 {
 	if (constraint_weight == 0) { return false; }
 
-	/*
-	We spread the contribution using bilinear interpolation.
+	if (g_nn_gradient) {
+		int num_dim = field->sizes.size();
 
-	Case A):
-		pos = 3.5: put all weight onto one equation:
-			(x[4] - x[3] = dx) * 1.0
+		int index = 0;
+		for (int d = 0; d < num_dim; ++d) {
+			int pos_d = std::floor(pos[d]);
+			bool in_lattice = 0 <= pos_d && pos_d + 1 < field->sizes[d];
+			if (!in_lattice) { return false; }
+			index += pos_d * field->strides[d];
+		}
+		for (int d = 0; d < num_dim; ++d) {
+			// d f(x, y) / dx = gradient[0]
+			// d f(x, y) / dy = gradient[1]
+			// ...
+			add_equation(&field->eq, Weight{constraint_weight}, Rhs{gradient[d]}, {
+				{index + 0,                 -1.0f},
+				{index + field->strides[d], +1.0f},
+			});
+		}
+		return true;
+	} else {
+		/*
+		We spread the contribution using bilinear interpolation.
 
-	Case B):
-		pos = 3.0: spread the weights equally over two neighbors:
-			(x[3] - x[2] = dx) * 0.5
-			(x[4] - x[3] = dx) * 0.5
+		Case A):
+			pos = 3.5: put all weight onto one equation:
+				(x[4] - x[3] = dx) * 1.0
 
-	Case C):
-	pos = 3.25: spread more weight on the next constraint:
-		(x[3] - x[2] = dx) * 0.25
-		(x[4] - x[3] = dx) * 0.75
+		Case B):
+			pos = 3.0: spread the weights equally over two neighbors:
+				(x[3] - x[2] = dx) * 0.5
+				(x[4] - x[3] = dx) * 0.5
 
-	However, this has a bug. We put this through a least *squares* solver.
-	Consider the case x[..] = 0 and dx = 1. Then the errors would be
-		case A) error = 1^2           = 1.0
-		case B) error = .5^2 + .5^2   = 0.5
-		case C) error = .25^2 + .75^2 = 0.625
+		Case C):
+			pos = 3.25: spread more weight on the next constraint:
+				(x[3] - x[2] = dx) * 0.25
+				(x[4] - x[3] = dx) * 0.75
 
-		This is not good. To compensate, we take the square root of the interpolation weights.
-	*/
+		We combine these constraints into one equation.
+		*/
 
-	int num_dim = field->sizes.size();
+		int num_dim = field->sizes.size();
 
-	float adjusted_pos[MAX_DIM];
-	for (int d = 0; d < num_dim; ++d) {
-		adjusted_pos[d] = pos[d] - 0.5f;
-	}
+		float adjusted_pos[MAX_DIM];
+		for (int d = 0; d < num_dim; ++d) {
+			adjusted_pos[d] = pos[d] - 0.5f;
+		}
 
-	int inteprolation_indices[TWO_TO_MAX_DIM];
-	float interpolation_kernel[TWO_TO_MAX_DIM];
-	int num_samples = multilerp(inteprolation_indices, interpolation_kernel, *field, adjusted_pos, 1);
-	if (num_samples == 0) { return false; }
+		int inteprolation_indices[TWO_TO_MAX_DIM];
+		float interpolation_kernel[TWO_TO_MAX_DIM];
+		int num_samples = multilerp(inteprolation_indices, interpolation_kernel, *field, adjusted_pos, 1);
+		if (num_samples == 0) { return false; }
 
-	if (g_alternative_gradient) {
 		for (int d = 0; d < num_dim; ++d) {
 			int row = field->eq.rhs.size();
 			float weight_sum = 0;
@@ -177,22 +191,8 @@ bool add_gradient_constraint(
 			field->eq.rhs.emplace_back(weight_sum * gradient[d]);
 		}
 
-	} else {
-		for (int i = 0; i < num_samples; ++i) {
-			for (int d = 0; d < num_dim; ++d) {
-				// d f(x, y) / dx = gradient[0]
-				// d f(x, y) / dy = gradient[1]
-				// ...
-				const float equation_weight = constraint_weight * std::sqrt(interpolation_kernel[i]);
-				add_equation(&field->eq, Weight{equation_weight}, Rhs{gradient[d]}, {
-					{inteprolation_indices[i] + 0,                 -1.0f},
-					{inteprolation_indices[i] + field->strides[d], +1.0f},
-				});
-			}
-		}
+		return true;
 	}
-
-	return true;
 }
 
 /// Add smoothness constraints between the unknowns:  index - stride, index, index + stride, ...

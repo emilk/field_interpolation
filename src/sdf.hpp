@@ -41,7 +41,7 @@ The lattice coordinates go from [0, 0, ...] to [width - 1, height - 1, ...] (inc
 /// with nearest-neighbor instead, if your dimensionality is high.
 const int MAX_DIM = 4;
 
-extern bool g_alternative_gradient;
+extern bool g_nn_gradient;
 
 /// A note about picking good parameters:
 /// If your model is continuous but with abrupt changes, use a high model_1 and low everything else.
@@ -64,7 +64,7 @@ struct Weights
 	// https://en.wikipedia.org/wiki/Smoothness#Order_of_continuity
 	float model_0       = 1e-6f; // How much we believe the field to be zero (regularization). If this is large everything will be zero.
 	float model_1       = 0.10f; // How much we believe the field to be uniform. If this is large you will take the average of the data.
-	float model_2       = 1.00f; // How much we believe the field to be smooth. If this is large you will be fitting a line to the data.
+	float model_2       = 0.50f; // How much we believe the field to be smooth. If this is large you will be fitting a line to the data.
 	float model_3       = 0.00f; // If this is large, you will be fitting a quadratic curve to you data.
 	float model_4       = 0.00f; // If this is large, you will be fitting a cubic curve to you data.
 };
