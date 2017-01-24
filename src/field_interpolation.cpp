@@ -1,4 +1,4 @@
-#include "sdf.hpp"
+#include "field_interpolation.hpp"
 
 #include <cmath>
 #include <ostream>
@@ -287,12 +287,14 @@ LatticeField sdf_from_points(
 	const float*            normals,
 	const float*            point_weights)
 {
+	LOG_SCOPE_F(INFO, "sdf_from_points");
 	CHECK_NOTNULL_F(positions);
 
 	int num_dim = sizes.size();
 	LatticeField field{sizes};
 
 	add_field_constraints(&field, weights);
+
 	for (int i = 0; i < num_points; ++i) {
 		float weight = point_weights ? point_weights[i] : 1.0f;
 		const float* pos = positions + i * num_dim;
@@ -310,30 +312,24 @@ std::vector<float> generate_error_map(
 	const std::vector<float>&   solution,
 	const std::vector<float>&   rhs)
 {
-	std::vector<float> heatmap(solution.size(), 0.0f);
-
-	const int num_rows = rhs.size();
-	std::vector<std::vector<Triplet>> row_triplets(num_rows);
+	std::vector<float> row_errors = rhs;
+	std::vector<float> sum_of_value_sq(rhs.size(), 0.0f);
 
 	for (const auto& triplet : triplets) {
-		if (triplet.value != 0) {
-			row_triplets[triplet.row].push_back(triplet);
-		}
+		row_errors[triplet.row] -= solution[triplet.col] * triplet.value;
+		sum_of_value_sq[triplet.row] += triplet.value * triplet.value;
 	}
 
-	for (int row = 0; row < num_rows; ++row) {
-		double sum_of_value_sq = 0;
-		double row_error = rhs[row];
-		for (const auto& triplet : row_triplets[row]) {
-			row_error -= solution[triplet.col] * triplet.value;
-			sum_of_value_sq += triplet.value * triplet.value;
-		}
-		row_error *= row_error;
+	for (auto& error : row_errors) {
+		error *= error;
+	}
 
-		// Now project back onto the solution:
-		for (const auto& triplet : row_triplets[row]) {
-			double blame_fraction = (triplet.value * triplet.value) / sum_of_value_sq;
-			heatmap[triplet.col] += row_error * blame_fraction;
+	std::vector<float> heatmap(solution.size(), 0.0f);
+
+	for (const auto& triplet : triplets) {
+		if (sum_of_value_sq[triplet.row] != 0) {
+			float blame_fraction = (triplet.value * triplet.value) / sum_of_value_sq[triplet.row];
+			heatmap[triplet.col] += blame_fraction * row_errors[triplet.row];
 		}
 	}
 

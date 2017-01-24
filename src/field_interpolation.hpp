@@ -59,14 +59,14 @@ extern bool g_nn_gradient;
 /// Higher orders of smoothness increases the computational cost!
 struct Weights
 {
-	float data_pos      = 1.00f; // How much we trust the point value/position
-	float data_gradient = 1.00f; // How much we trust the point gradient/normal
+	float data_pos      = 1.00f; ///< How much we trust the point value/position
+	float data_gradient = 1.00f; ///< How much we trust the point gradient/normal
 	// https://en.wikipedia.org/wiki/Smoothness#Order_of_continuity
-	float model_0       = 1e-6f; // How much we believe the field to be zero (regularization). If this is large everything will be zero.
-	float model_1       = 0.10f; // How much we believe the field to be uniform. If this is large you will take the average of the data.
-	float model_2       = 0.50f; // How much we believe the field to be smooth. If this is large you will be fitting a line to the data.
-	float model_3       = 0.00f; // If this is large, you will be fitting a quadratic curve to you data.
-	float model_4       = 0.00f; // If this is large, you will be fitting a cubic curve to you data.
+	float model_0       = 1e-6f; ///< How much we believe the field to be zero (regularization). If this is large everything will be zero.
+	float model_1       = 0.10f; ///< How much we believe the field to be uniform. If this is large you will take the average of the data.
+	float model_2       = 0.50f; ///< How much we believe the field to be smooth. If this is large you will be fitting a line to the data.
+	float model_3       = 0.00f; ///< If this is large, you will be fitting a quadratic curve to you data.
+	float model_4       = 0.00f; ///< If this is large, you will be fitting a cubic curve to you data.
 };
 
 /// Sparse Ax=b where A is described by `triplets` and `rhs` is b.
@@ -86,8 +86,8 @@ struct LinearEquationPair
 
 struct LatticeField
 {
-	LinearEquation   eq;
-	std::vector<int> sizes;
+	LinearEquation   eq;      ///< Accumulated equations.
+	std::vector<int> sizes;   ///< sizes[d] == size of dimension `d`
 	std::vector<int> strides; ///< stride[d] == distance between adjacent values along dimension `d`
 
 	LatticeField() = default;

@@ -1,75 +1,95 @@
 #include "sparse_linear.hpp"
 
 #include <Eigen/Eigen>
+#include <Eigen/IterativeLinearSolvers>
 #include <Eigen/Sparse>
 
 #include <loguru.hpp>
 
-template<typename T>
-std::vector<T> solve_sparse_linear_t(
-	int                         columns,
-	const std::vector<Triplet>& triplets,
-	const std::vector<T>&       rhs)
-{
-	using VectorXr = Eigen::Matrix<T, Eigen::Dynamic, 1>;
+using VectorXr = Eigen::Matrix<float, Eigen::Dynamic, 1>;
 
-	std::vector<Eigen::Triplet<T>> eigen_triplets;
+Eigen::SparseMatrix<float> as_sparse_matrix(
+    const std::vector<Triplet>& triplets, size_t num_rows, size_t num_columns)
+{
+	LOG_SCOPE_F(INFO, "as_sparse_matrix");
+
+	std::vector<Eigen::Triplet<float>> eigen_triplets;
 	eigen_triplets.reserve(triplets.size());
 	for (const auto& triplet : triplets) {
 		CHECK_GE_F(triplet.col, 0);
 		CHECK_GE_F(triplet.row, 0);
-		CHECK_LT_F(triplet.col, columns);
-		CHECK_LT_F(triplet.row, rhs.size());
+		CHECK_LT_F(triplet.col, num_columns);
+		CHECK_LT_F(triplet.row, num_rows);
 		if (triplet.value != 0.0f) {
 			eigen_triplets.emplace_back(triplet.row, triplet.col, triplet.value);
 		}
 	}
 
-	Eigen::SparseMatrix<T> A(rhs.size(), columns);
+	Eigen::SparseMatrix<float> A(num_rows, num_columns);
+	LOG_SCOPE_F(INFO, "setFromTriplets");
 	A.setFromTriplets(eigen_triplets.begin(), eigen_triplets.end());
 	A.makeCompressed();
+	return A;
+}
 
-	Eigen::SparseMatrix<T> AtA = A.transpose() * A;
-	CHECK_EQ_F(AtA.rows(), AtA.cols());
-	AtA.makeCompressed();
+VectorXr as_eigen_vector(const std::vector<float>& values)
+{
+	return Eigen::Map<VectorXr>(const_cast<float*>(values.data()), values.size());
+}
 
-	Eigen::SparseLU<Eigen::SparseMatrix<T>, Eigen::COLAMDOrdering<int>> solver;
+std::vector<float> solve_sparse_linear(
+	int                         num_columns,
+	const std::vector<Triplet>& triplets,
+	const std::vector<float>&   rhs)
+{
+	LOG_SCOPE_F(INFO, "solve_sparse_linear");
+	const auto A = as_sparse_matrix(triplets, rhs.size(), num_columns);
 
-	solver.compute(AtA);
+	Eigen::SparseMatrix<float> AtA;
+
+	{
+		LOG_SCOPE_F(INFO, "AtA");
+		AtA = A.transpose() * A;
+		CHECK_EQ_F(AtA.rows(), AtA.cols());
+		AtA.makeCompressed();
+	}
+
+	VectorXr Atb = A.transpose() * as_eigen_vector(rhs);
+
+	LOG_SCOPE_F(INFO, "Solve");
+	Eigen::SparseLU<Eigen::SparseMatrix<float>, Eigen::COLAMDOrdering<int>> solver(AtA);
+
 	if (solver.info() != Eigen::Success) {
 		LOG_F(WARNING, "solver.compute failed");
 		return {};
 	}
 
-	const VectorXr b = Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, 1>>(const_cast<T*>(rhs.data()), rhs.size());
-	VectorXr Atb = A.transpose() * b;
 	VectorXr solution = solver.solve(Atb);
 
-	if(solver.info() != Eigen::Success) {
+	if (solver.info() != Eigen::Success) {
 		LOG_F(WARNING, "solver.solve failed");
 		return {};
 	}
 
-	return std::vector<T>(solution.data(), solution.data() + solution.rows() * solution.cols());
+	return std::vector<float>(solution.data(), solution.data() + solution.rows() * solution.cols());
 }
 
-std::vector<float> solve_sparse_linear(
-	int                         columns,
+std::vector<float> solve_sparse_linear_with_guess(
 	const std::vector<Triplet>& triplets,
 	const std::vector<float>&   rhs,
-	bool                        double_precision)
+	const std::vector<float>&   guess)
 {
-	if (double_precision) {
-		std::vector<double> rhs_doubles;
-		rhs_doubles.reserve(rhs.size());
-		for (auto f : rhs) { rhs_doubles.push_back(f); }
+	const auto A = as_sparse_matrix(triplets, rhs.size(), guess.size());
 
-		const auto answer_doubles = solve_sparse_linear_t<double>(columns, triplets, rhs_doubles);
-		std::vector<float> answer_floats;
-		answer_floats.reserve(answer_doubles.size());
-		for (auto d : answer_doubles) { answer_floats.push_back(d); }
-		return answer_floats;
-	} else {
-		return solve_sparse_linear_t<float>(columns, triplets, rhs);
+	Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<float>> solver(A);
+	const VectorXr solution = solver.solveWithGuess(as_eigen_vector(rhs), as_eigen_vector(guess));
+	LOG_F(INFO, "CG iterations: %lu", solver.iterations());
+	LOG_F(INFO, "CG error:      %f",  solver.error());
+
+	if (solver.info() != Eigen::Success) {
+		LOG_F(WARNING, "solver.solve failed");
+		return {};
 	}
+
+	return std::vector<float>(solution.data(), solution.data() + solution.rows() * solution.cols());
 }

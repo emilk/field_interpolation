@@ -22,14 +22,12 @@
 #include <loguru.hpp>
 
 #include "dual_contouring_2d.hpp"
-#include "sdf.hpp"
+#include "field_interpolation.hpp"
 #include "serialize_configuru.hpp"
 #include "sparse_linear.hpp"
 
 VISITABLE_STRUCT(ImVec2, x, y);
 VISITABLE_STRUCT(Weights, data_pos, data_gradient, model_0, model_1, model_2, model_3);
-
-using namespace emilib::math;
 
 using Vec2List = std::vector<ImVec2>;
 
@@ -63,7 +61,6 @@ struct Options
 	float              pos_noise        =  0.005f;
 	float              dir_noise        =  0.05f;
 	Weights            weights;
-	bool               double_precision = false;
 
 	Options()
 	{
@@ -78,7 +75,7 @@ struct Options
 	}
 };
 
-VISITABLE_STRUCT(Options, seed, resolution, shapes, pos_noise, dir_noise, weights, double_precision);
+VISITABLE_STRUCT(Options, seed, resolution, shapes, pos_noise, dir_noise, weights);
 
 struct Result
 {
@@ -108,7 +105,7 @@ std::vector<RGBA> generate_heatmap(const std::vector<float>& data, float min, fl
 		if (max <= min) {
 			colors.emplace_back(RGBA{0,0,0,255});
 		} else {
-			int colormap_x = remap_clamp(value, min, max, 0, colormap_width - 1);
+			int colormap_x = math::remap_clamp(value, min, max, 0, colormap_width - 1);
 			colors.emplace_back(colormap[colormap_x]);
 		}
 	}
@@ -117,7 +114,7 @@ std::vector<RGBA> generate_heatmap(const std::vector<float>& data, float min, fl
 
 auto circle_point(const Shape& shape, Dualf t) -> std::pair<Dualf, Dualf>
 {
-	Dualf angle = t * TAUf + shape.rotation;
+	Dualf angle = t * math::TAUf + shape.rotation;
 	return std::make_pair(std::cos(angle), std::sin(angle));
 }
 
@@ -126,7 +123,7 @@ auto poly_point(const Shape& shape, Dualf t) -> std::pair<Dualf, Dualf>
 	CHECK_GE_F(shape.polygon_sides, 3u);
 
 	auto polygon_corner = [&](int corner) {
-		float angle = TAUf * corner / shape.polygon_sides;
+		float angle = math::TAUf * corner / shape.polygon_sides;
 		angle += shape.rotation;
 		return ImVec2(std::cos(angle), std::sin(angle));
 	};
@@ -151,8 +148,8 @@ auto shape_point(const Shape& shape, Dualf t)
 	std::tie(circle_x, circle_y) = circle_point(shape, t);
 	std::tie(poly_x,   poly_y)   = poly_point(shape,   t);
 
-	Dualf x = lerp(poly_x, circle_x, shape.circleness);
-	Dualf y = lerp(poly_y, circle_y, shape.circleness);
+	Dualf x = math::lerp(poly_x, circle_x, shape.circleness);
+	Dualf y = math::lerp(poly_y, circle_y, shape.circleness);
 
 	float dx = x.eps;
 	float dy = y.eps;
@@ -218,6 +215,7 @@ float area(const std::vector<Shape>& shapes)
 
 auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Options& options)
 {
+	LOG_SCOPE_F(INFO, "generate_sdf");
 	CHECK_EQ_F(positions.size(), normals.size());
 
 	const int width = options.resolution;
@@ -228,7 +226,7 @@ auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Opti
 		{width, height}, options.weights, positions.size(), &positions[0].x, &normals[0].x, nullptr);
 
 	const size_t num_unknowns = width * height;
-	auto sdf = solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs, options.double_precision);
+	auto sdf = solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs);
 	if (sdf.size() != num_unknowns) {
 		LOG_F(ERROR, "Failed to find a solution");
 		sdf.resize(num_unknowns, 0.0f);
@@ -305,7 +303,7 @@ Result generate(const Options& options)
 		area_pixels += insideness;
 	}
 
-	result.blob_area = area_pixels / sqr(resolution - 1);
+	result.blob_area = area_pixels / math::sqr(resolution - 1);
 
 	result.duration_seconds = timer.secs();
 	return result;
@@ -317,7 +315,7 @@ bool show_shape_options(Shape* shape)
 
 	ImGui::Text("Shape:");
 	changed |= ImGui::Checkbox("inverted (hole)",   &shape->inverted);
-	changed |= ImGuiPP::SliderSize("num_points",    &shape->num_points,    1, 1024, 2);
+	changed |= ImGuiPP::SliderSize("num_points",    &shape->num_points,    1, 100000, 4);
 	changed |= ImGui::SliderFloat2("lopsidedness",  shape->lopsidedness,   0,    2);
 	changed |= ImGui::SliderFloat2("center",        &shape->center.x,      0,    1);
 	changed |= ImGui::SliderFloat("radius",         &shape->radius,        0,    1);
@@ -381,7 +379,6 @@ bool show_options(Options* options)
 	changed |= ImGui::SliderAngle("dir_noise", &options->dir_noise, 0, 360);
 	ImGui::Separator();
 	changed |= show_weights(&options->weights);
-	changed |= ImGui::Checkbox("Solve with double precision", &options->double_precision);
 
 	return changed;
 }
@@ -432,6 +429,7 @@ void show_points(const Options& options, const Vec2List& positions, const Vec2Li
 	ImVec2 canvas_pos, ImVec2 canvas_size)
 {
 	CHECK_EQ_F(positions.size(), normals.size());
+	if (positions.size() > 2000) { return; }
 
 	ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
@@ -439,9 +437,12 @@ void show_points(const Options& options, const Vec2List& positions, const Vec2Li
 		ImVec2 center;
 		center.x = canvas_pos.x + canvas_size.x * positions[pi].x;
 		center.y = canvas_pos.y + canvas_size.y * positions[pi].y;
-		draw_list->AddCircleFilled(center, 1, ImColor(1.0f, 1.0f, 1.0f, 1.0f));
-		const float arrow_len = 5;
-		draw_list->AddLine(center, ImVec2{center.x + arrow_len * normals[pi].x, center.y + arrow_len * normals[pi].y}, ImColor(1.0f, 1.0f, 1.0f, 0.75f));
+		draw_list->AddCircleFilled(center, 1, ImColor(1.0f, 1.0f, 1.0f, 1.0f), 4);
+
+		if (positions.size() < 1000) {
+			const float arrow_len = 5;
+			draw_list->AddLine(center, ImVec2{center.x + arrow_len * normals[pi].x, center.y + arrow_len * normals[pi].y}, ImColor(1.0f, 1.0f, 1.0f, 0.75f));
+		}
 	}
 }
 
@@ -573,9 +574,7 @@ void show_1d_field_window(Field1DInput* input)
 	add_field_constraints(&field, input->weights);
 
 	const size_t num_unknowns = input->resolution;
-	const bool double_precision = false;
-	auto interpolated =
-		solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs, double_precision);
+	auto interpolated = solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs);
 	if (interpolated.size() != num_unknowns) {
 		LOG_F(ERROR, "Failed to find a solution");
 		interpolated.resize(num_unknowns, 0.0f);
@@ -642,8 +641,8 @@ void show_2d_field_window()
 	for (int y = 0; y < 4; ++y) {
 		for (int x = 0; x < 4; ++x) {
 			const float pos[2] = {
-				remap(x, 0.0f, 3.0f, 0.0f, s_resolution - 1.0f),
-				remap(y, 0.0f, 3.0f, 0.0f, s_resolution - 1.0f),
+				math::remap(x, 0.0f, 3.0f, 0.0f, s_resolution - 1.0f),
+				math::remap(y, 0.0f, 3.0f, 0.0f, s_resolution - 1.0f),
 			};
 			add_value_constraint(&field, pos, values[y * 4 + x], s_weights.data_pos);
 			const float zero[2] = {0,0};
@@ -652,9 +651,7 @@ void show_2d_field_window()
 	}
 
 	const size_t num_unknowns = s_resolution * s_resolution;
-	const bool double_precision = false;
-	auto interpolated =
-		solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs, double_precision);
+	auto interpolated = solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs);
 	if (interpolated.size() != num_unknowns) {
 		LOG_F(ERROR, "Failed to find a solution");
 		interpolated.resize(num_unknowns, 0.0f);
@@ -730,8 +727,9 @@ struct FieldGui
 		} else {
 			lines = emilib::marching_squares(options.resolution, options.resolution, result.sdf.data());
 		}
-		const float lines_area = emilib::calc_area(lines.size() / 4, lines.data()) / sqr(options.resolution - 1);
+		const float lines_area = emilib::calc_area(lines.size() / 4, lines.data()) / math::sqr(options.resolution - 1);
 
+		ImGui::Text("%lu unknowns", options.resolution * options.resolution);
 		ImGui::Text("%lu equations", result.field.eq.rhs.size());
 		ImGui::Text("%lu non-zero values in matrix", result.field.eq.triplets.size());
 		ImGui::Text("Calculated in %.3f s", result.duration_seconds);
