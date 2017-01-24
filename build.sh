@@ -42,4 +42,4 @@ done
 wait
 
 echo >&2 "Linking..."
-$CXX $CPPFLAGS $OBJECTS $LDLIBS -o sdf.bin
+$CXX $CPPFLAGS $OBJECTS $LDLIBS -o field_interpolation.bin

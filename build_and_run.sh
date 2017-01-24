@@ -1,6 +1,3 @@
 set -eu
-
 ./build.sh
-
-./sdf.bin $@
-
+./field_interpolation.bin $@

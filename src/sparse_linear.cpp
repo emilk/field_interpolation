@@ -260,6 +260,11 @@ VectorXr tile_solver(
 	for (int tile_index = 0; tile_index < num_tiles_total; ++tile_index) {
 		ERROR_CONTEXT("tile_index", tile_index);
 		tiles[tile_index].rhs = VectorXr::Zero(unknowns_per_tile);
+
+		// Add small regularization, needed for edge tiles which extends outside of lattice:
+		for (int i = 0; i < unknowns_per_tile; ++i) {
+			tiles[tile_index].triplets.emplace_back(i, i, 1e-6f);
+		}
 	}
 
 	for (int full_index = 0; full_index < Atb_full.size(); ++full_index) {
@@ -301,24 +306,10 @@ VectorXr tile_solver(
 		A_tile.setFromTriplets(tile.triplets.begin(), tile.triplets.end());
 		A_tile.makeCompressed();
 
-		// ------------------------------------------------------------------------
-
-		// LOG_F(INFO, "A_tile nnz: %lu (%.3f%%)", A_tile.nonZeros(),
-		//       100.0f * A_tile.nonZeros() / (A_tile.rows() * A_tile.cols()));
-
 		Eigen::SimplicialLLT<SparseMatrix> solver_tile(A_tile);
-
-		if (solver_tile.info() != Eigen::Success) {
-			num_failures += 1; // FIXME: this happens for all edge tiles (they have unknows without any equations)
-			continue;
-		}
-
+		if (solver_tile.info() != Eigen::Success) { num_failures += 1; continue; }
 		VectorXr solution_tile = solver_tile.solve(tile.rhs);
-
-		if (solver_tile.info() != Eigen::Success) {
-			num_failures += 1;
-			continue;
-		}
+		if (solver_tile.info() != Eigen::Success) { num_failures += 1; continue; }
 
 		CHECK_GE_F(solution_tile.size(), unknowns_per_tile);
 
@@ -327,11 +318,14 @@ VectorXr tile_solver(
 			int index_in_tile_copy = index_in_tile;
 			int stride = 1;
 			int full_index = 0;
+			bool inside = true;
 
 			for (int d = 0; d < sizes_full.size(); ++d) {
 				int tile_x = tile_index_copy % num_tiles[d];
 				int x_in_tile = index_in_tile_copy % tile_size;
 				int full_x = tile_x * tile_size + x_in_tile;
+
+				inside &= (full_x < sizes_full[d]);
 
 				full_index += full_x * stride;
 				tile_index_copy /= num_tiles[d];
@@ -339,7 +333,9 @@ VectorXr tile_solver(
 				stride *= sizes_full[d];
 			}
 
-			solution_full[full_index] = solution_tile[index_in_tile];
+			if (inside) {
+				solution_full[full_index] = solution_tile[index_in_tile];
+			}
 		}
 	}
 
