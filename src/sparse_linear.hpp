@@ -26,4 +26,20 @@ std::vector<float> solve_sparse_linear(
 std::vector<float> solve_sparse_linear_with_guess(
 	const std::vector<Triplet>& triplets,
 	const std::vector<float>&   rhs,
-	const std::vector<float>&   guess);
+	const std::vector<float>&   guess,
+	float                       error_tolerance);
+
+struct SolveOptions
+{
+	int   downscale_factor =  2;
+	bool  tile             = true;
+	int   tile_size        = 16;
+	bool  cg               = true;
+	float error_tolerance  =  1e-3f;
+};
+
+std::vector<float> solve_sparse_linear_approximate_lattice(
+	const std::vector<Triplet>& triplets,
+	const std::vector<float>&   rhs,
+	const std::vector<int>&     sizes_full,
+	const SolveOptions&         options);

@@ -28,6 +28,7 @@
 
 VISITABLE_STRUCT(ImVec2, x, y);
 VISITABLE_STRUCT(Weights, data_pos, data_gradient, model_0, model_1, model_2, model_3);
+VISITABLE_STRUCT(SolveOptions, downscale_factor, tile, tile_size, cg, error_tolerance);
 
 using Vec2List = std::vector<ImVec2>;
 
@@ -61,6 +62,8 @@ struct Options
 	float              pos_noise        =  0.005f;
 	float              dir_noise        =  0.05f;
 	Weights            weights;
+	bool               exact_solve      = false;
+	SolveOptions       solve_options;
 
 	Options()
 	{
@@ -75,7 +78,7 @@ struct Options
 	}
 };
 
-VISITABLE_STRUCT(Options, seed, resolution, shapes, pos_noise, dir_noise, weights);
+VISITABLE_STRUCT(Options, seed, resolution, shapes, pos_noise, dir_noise, weights, exact_solve, solve_options);
 
 struct Result
 {
@@ -226,11 +229,18 @@ auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Opti
 		{width, height}, options.weights, positions.size(), &positions[0].x, &normals[0].x, nullptr);
 
 	const size_t num_unknowns = width * height;
-	auto sdf = solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs);
+	std::vector<float> sdf;
+	if (options.exact_solve) {
+		sdf = solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs);
+	} else {
+		sdf = solve_sparse_linear_approximate_lattice(
+			field.eq.triplets, field.eq.rhs, {width, height}, options.solve_options);
+	}
 	if (sdf.size() != num_unknowns) {
 		LOG_F(ERROR, "Failed to find a solution");
 		sdf.resize(num_unknowns, 0.0f);
 	}
+
 	return std::make_tuple(field, sdf);
 }
 
@@ -348,6 +358,25 @@ bool show_weights(Weights* weights)
 	return changed;
 }
 
+bool show_solve_options(SolveOptions* options)
+{
+	bool changed = false;
+	if (ImGui::Button("Reset solve options")) {
+		*options = {};
+		changed = true;
+	}
+	changed |= ImGui::SliderInt("downscale_factor", &options->downscale_factor, 2, 10);
+	changed |= ImGui::Checkbox("tile", &options->tile);
+	if (options->tile) {
+		changed |= ImGui::SliderInt("tile_size", &options->tile_size, 2, 128);
+	}
+	changed |= ImGui::Checkbox("cg", &options->cg);
+	if (options->cg) {
+		changed |= ImGui::SliderFloat("error_tolerance", &options->error_tolerance, 1e-6f, 1, "%.6f", 4);
+	}
+	return changed;
+}
+
 bool show_options(Options* options)
 {
 	bool changed = false;
@@ -379,6 +408,11 @@ bool show_options(Options* options)
 	changed |= ImGui::SliderAngle("dir_noise", &options->dir_noise, 0, 360);
 	ImGui::Separator();
 	changed |= show_weights(&options->weights);
+
+	changed |= ImGui::Checkbox("Exact solve", &options->exact_solve);
+	if (!options->exact_solve) {
+		changed |= show_solve_options(&options->solve_options);
+	}
 
 	return changed;
 }
@@ -774,7 +808,7 @@ struct FieldGui
 
 		ImGui::Text("Field min: %f, max: %f",
 			*min_element(result.sdf.begin(), result.sdf.end()),
-			*max_element(result.heatmap.begin(), result.heatmap.end()));
+			*max_element(result.sdf.begin(), result.sdf.end()));
 
 		show_texture_options(&sdf_texture);
 		ImGui::SameLine();
