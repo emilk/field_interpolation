@@ -247,7 +247,7 @@ VectorXr tile_solver(
 		CHECK_GE_F(index_in_tile, 0);
 		CHECK_LT_F(index_in_tile, unknowns_per_tile);
 
-		return {tile_index, index_in_tile};
+		return std::make_tuple(tile_index, index_in_tile);
 	};
 
 	struct Tile

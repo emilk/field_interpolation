@@ -1,5 +1,6 @@
 #pragma once
 
+#include <iosfwd>
 #include <vector>
 
 #include "sparse_linear.hpp"
