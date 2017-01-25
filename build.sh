@@ -6,7 +6,7 @@ if [ ! -z ${1+x} ] && [ $1 == "clean" ]; then
 	exit 0
 fi
 
-# git submodule update --init --recursive
+git submodule update --init --recursive
 
 mkdir -p build
 
