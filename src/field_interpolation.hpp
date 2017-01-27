@@ -78,6 +78,7 @@ struct Weights
 	///   A B
 	///   C D
 	/// This is then the strength of the constraints B-A==D-C and C-A=D-B.
+	/// This seem to improve the iso-lines for large positive distances, but adds a lot of equations.
 	float gradient_smoothness = 0.0f;
 
 	GradientKernel gradient_kernel = GradientKernel::kCellEdges;

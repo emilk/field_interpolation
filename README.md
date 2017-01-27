@@ -53,7 +53,7 @@ Having the solution be a least squares approximation has the advantage that we c
 
 ![weak smoothness](images/noisy_trust_the_data.png) ![medium smoothness](images/noisy_medium.png) ![strong smoothness](images/noisy_smooth.png)
 
-## Data inteprolation
+## Data interpolation
 In the initial example the data constraints happened to lie perfectly on lattice coordinates. What if they don't?
 
 Let's say we have the constraint `f(3.4) = 10` on an integer lattice. They way we will add this is by using linear interpolation: `0.6 · f(3) + 0.4 · f(4) = 10`. In other words: we want `f(3.4) = 10` when we interpolate the solutions at `f(3)` and `f(4)`.
@@ -133,4 +133,3 @@ There are probably plenty of improvement that can be done to this.
 * Use 1D to verify iso-surface positioning is perfect
 * Split back-projected error into model and data constraints.
 * Add several saved configs for distance field tab
-* Show several iso-curves for different iso values.

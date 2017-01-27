@@ -21,7 +21,6 @@
 #include <emilib/timer.hpp>
 #include <loguru.hpp>
 
-#include "dual_contouring_2d.hpp"
 #include "field_interpolation.hpp"
 #include "serialize_configuru.hpp"
 #include "sparse_linear.hpp"
@@ -487,11 +486,12 @@ void show_points(const Options& options, const Vec2List& positions, const Vec2Li
 	}
 }
 
-void show_mesh(
+void show_outline(
 	size_t                    resolution,
 	const std::vector<float>& lines,
 	ImVec2                    canvas_pos,
 	ImVec2                    canvas_size,
+	ImColor                   color,
 	bool                      draw_blob_normals)
 {
 	ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -509,7 +509,7 @@ void show_mesh(
 		x1 = canvas_pos.x + canvas_size.x * (x1 / (resolution - 1.0f));
 		y1 = canvas_pos.y + canvas_size.y * (y1 / (resolution - 1.0f));
 
-		draw_list->AddLine({x0, y0}, {x1, y1}, ImColor(1.0f, 0.0f, 0.0f, 1.0f));
+		draw_list->AddLine({x0, y0}, {x1, y1}, color);
 
 		if (draw_blob_normals) {
 			float cx = (x0 + x1) / 2;
@@ -709,6 +709,17 @@ void show_2d_field_window()
 	// show_field_equations(field);
 }
 
+std::vector<float> iso_surface(int width, int height, const float* values, float iso)
+{
+	std::vector<float> iso_at_zero;
+	iso_at_zero.reserve(width * height);
+	for (int i = 0; i < width * height; ++i) {
+		iso_at_zero.push_back(values[i] - iso);
+	}
+
+	return emilib::marching_squares(width, height, iso_at_zero.data());
+}
+
 struct FieldGui
 {
 	Options options;
@@ -718,9 +729,9 @@ struct FieldGui
 	gl::Texture heatmap_texture{"heatmap", gl::TexParams::clamped_nearest()};
 	bool draw_points = true;
 	bool draw_cells = true;
-	bool dual_contouring = false;
-	bool draw_blob = true;
+	bool draw_iso_lines = true;
 	bool draw_blob_normals = false;
+	float iso_spacing = 2;
 
 	FieldGui()
 	{
@@ -751,24 +762,11 @@ struct FieldGui
 
 	void show_result()
 	{
-		std::vector<float> lines;
-		if (dual_contouring) {
-			std::vector<dc::Vec2> gradients(options.resolution * options.resolution);
-			dc::calculate_gradients(gradients.data(), options.resolution, options.resolution, result.sdf.data());
+		const float iso_min = *min_element(result.sdf.begin(), result.sdf.end());
+		const float iso_max = *max_element(result.sdf.begin(), result.sdf.end());
 
-			std::vector<dc::Vec2> vertices;
-			std::vector<dc::Index> line_segments;
-			dc::dual_contouring_2d(&vertices, &line_segments, options.resolution,
-				options.resolution, result.sdf.data(), gradients.data());
-
-			for (auto index : line_segments) {
-				lines.push_back(vertices[index].x);
-				lines.push_back(vertices[index].y);
-			}
-		} else {
-			lines = emilib::marching_squares(options.resolution, options.resolution, result.sdf.data());
-		}
-		const float lines_area = emilib::calc_area(lines.size() / 4, lines.data()) / math::sqr(options.resolution - 1);
+		std::vector<float> zero_lines = iso_surface(options.resolution, options.resolution, result.sdf.data(), 0.0f);
+		const float lines_area = emilib::calc_area(zero_lines.size() / 4, zero_lines.data()) / math::sqr(options.resolution - 1);
 
 		ImGui::Text("%lu unknowns", options.resolution * options.resolution);
 		ImGui::Text("%lu equations", result.field.eq.rhs.size());
@@ -781,12 +779,13 @@ struct FieldGui
 		ImGui::SameLine();
 		ImGui::Checkbox("Input cells", &draw_cells);
 		ImGui::SameLine();
-		ImGui::Checkbox("Dual contouring", &dual_contouring);
-		ImGui::SameLine();
-		ImGui::Checkbox("Output blob", &draw_blob);
-		if (draw_blob) {
+		ImGui::Checkbox("Output blob", &draw_iso_lines);
+		if (draw_iso_lines) {
 			ImGui::SameLine();
 			ImGui::Checkbox("Output normals", &draw_blob_normals);
+			ImGui::SameLine();
+			ImGui::PushItemWidth(128);
+			ImGui::SliderFloat("Iso spacing", &iso_spacing, 1, 10, "%.0f");
 		}
 
 		ImVec2 available = ImGui::GetContentRegionAvail();
@@ -796,7 +795,13 @@ struct FieldGui
 		ImGui::InvisibleButton("canvas", canvas_size);
 		if (draw_cells) { show_cells(options, canvas_pos, canvas_size); }
 		if (draw_points) { show_points(options, result.point_positions, result.point_normals, canvas_pos, canvas_size); }
-		if (draw_blob) { show_mesh(options.resolution, lines, canvas_pos, canvas_size, draw_blob_normals); }
+		if (draw_iso_lines) {
+			for (int i = math::floor_to_int(iso_min / iso_spacing); i <= math::ceil_to_int(iso_max / iso_spacing); ++i) {
+				auto iso_lines = iso_surface(options.resolution, options.resolution, result.sdf.data(), i * iso_spacing);
+				int color = i == 0 ? ImColor(1.0f, 0.0f, 0.0f, 1.0f) : ImColor(0.5f, 0.5f, 0.5f, 0.5f);
+				show_outline(options.resolution, iso_lines, canvas_pos, canvas_size, color, i == 0 && draw_blob_normals);
+			}
+		}
 
 		blob_texture.set_params(sdf_texture.params());
 		heatmap_texture.set_params(sdf_texture.params());
@@ -813,9 +818,7 @@ struct FieldGui
 		ImGui::SameLine();
 		ImGui::Image(reinterpret_cast<ImTextureID>(blob_texture.id()), canvas_size);
 
-		ImGui::Text("Field min: %f, max: %f",
-			*min_element(result.sdf.begin(), result.sdf.end()),
-			*max_element(result.sdf.begin(), result.sdf.end()));
+		ImGui::Text("Field min: %f, max: %f", iso_min, iso_max);
 
 		show_texture_options(&sdf_texture);
 		ImGui::SameLine();
