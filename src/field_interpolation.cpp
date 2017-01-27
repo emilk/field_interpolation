@@ -250,21 +250,22 @@ bool add_gradient_constraint(
 	}
 }
 
-/// Add smoothness constraints between the unknowns:  index - stride, index, index + stride, ...
+/// Add smoothness constraints at the given coordinate along the given dimension
 void add_model_constraint(
 	LatticeField*  field,
 	const Weights& weights,
+	const int      coordinate[MAX_DIM],
 	int            index,    // index of this value
-	int            dim_cord, // coordinate on this dimension
 	int            d)        // dimension
 {
-	const int size   = field->sizes[d];
-	const int stride = field->strides[d];
+	const int size     = field->sizes[d];
+	const int stride   = field->strides[d];
+	const int dim_cord = coordinate[d];
 
 	// These weights come from Pascal's triangle.
 	// See also https://en.wikipedia.org/wiki/Finite_difference_coefficient
 
-	if (0 <= dim_cord && dim_cord < size) {
+	if (weights.model_0 > 0 && 0 <= dim_cord && dim_cord < size) {
 		// f(x) = 0
 		// Tikhonov diagonal regularization
 		add_equation(&field->eq, Weight{weights.model_0}, Rhs{0.0f}, {
@@ -272,7 +273,7 @@ void add_model_constraint(
 		});
 	}
 
-	if (0 <= dim_cord && dim_cord + 1 < size) {
+	if (weights.model_1 > 0 && 0 <= dim_cord && dim_cord + 1 < size) {
 		// f′(x) = 0   ⇔   f(x) = f(x + 1)
 		add_equation(&field->eq, Weight{weights.model_1}, Rhs{0.0f}, {
 			{index + 0 * stride, -1.0f},
@@ -280,7 +281,7 @@ void add_model_constraint(
 		});
 	}
 
-	if (0 <= dim_cord && dim_cord + 2 < size) {
+	if (weights.model_2 > 0 && 0 <= dim_cord && dim_cord + 2 < size) {
 		// f″(x) = 0   ⇔   f′(x - ½) = f′(x + ½)
 		add_equation(&field->eq, Weight{weights.model_2}, Rhs{0.0f}, {
 			{index + 0 * stride, +1.0f},
@@ -289,7 +290,7 @@ void add_model_constraint(
 		});
 	}
 
-	if (0 <= dim_cord && dim_cord + 3 < size) {
+	if (weights.model_3 > 0 && 0 <= dim_cord && dim_cord + 3 < size) {
 		// f‴(x) = 0   ⇔   f″(x - ½) = f″(x + ½)
 		add_equation(&field->eq, Weight{weights.model_3}, Rhs{0.0f}, {
 			{index + 0 * stride, +1.0f},
@@ -299,7 +300,7 @@ void add_model_constraint(
 		});
 	}
 
-	if (0 <= dim_cord && dim_cord + 4 < size) {
+	if (weights.model_4 > 0 && 0 <= dim_cord && dim_cord + 4 < size) {
 		// f⁗(x) = 0   ⇔   f‴(x - ½) = f‴(x + ½)
 		add_equation(&field->eq, Weight{weights.model_4}, Rhs{0.0f}, {
 			{index + 0 * stride, +1.0f},
@@ -308,6 +309,28 @@ void add_model_constraint(
 			{index + 3 * stride, -4.0f},
 			{index + 4 * stride, +1.0f},
 		});
+	}
+
+	if (weights.gradient_smoothness > 0 && 0 <= dim_cord && dim_cord + 1 < size) {
+		// The gradient along d should be equal in two neighboring edges:
+		for (int orthogonal_dim = 0; orthogonal_dim < field->sizes.size(); ++orthogonal_dim) {
+			if (d == orthogonal_dim) { continue; }
+			if (coordinate[orthogonal_dim] + 1 >= field->sizes[orthogonal_dim]) { continue; }
+			add_equation(&field->eq, Weight{weights.gradient_smoothness}, Rhs{0.0f}, {
+				{index + 0 * field->strides[orthogonal_dim] + 0 * field->strides[d], -1.0f},
+				{index + 0 * field->strides[orthogonal_dim] + 1 * field->strides[d], +1.0f},
+				{index + 1 * field->strides[orthogonal_dim] + 0 * field->strides[d], +1.0f},
+				{index + 1 * field->strides[orthogonal_dim] + 1 * field->strides[d], -1.0f},
+			});
+		}
+	}
+}
+
+void coordinate_from_index(const LatticeField& field, int coordinate[MAX_DIM], int index)
+{
+	for (int d = 0; d < field.sizes.size(); ++d) {
+		coordinate[d] = index % field.sizes[d];
+		index /= field.sizes[d];
 	}
 }
 
@@ -320,13 +343,10 @@ void add_field_constraints(
 		num_unknowns *= dimension_size;
 	}
 	for (int index = 0; index < num_unknowns; ++index) {
-		int stride = 1;
-		int coordinate = index;
+		int coordinate[MAX_DIM];
+		coordinate_from_index(*field, coordinate, index);
 		for (int d = 0; d < field->sizes.size(); ++d) {
-			int dim_cord = coordinate % field->sizes[d];
-			add_model_constraint(field, weights, index, dim_cord, d);
-			coordinate /= field->sizes[d];
-			stride *= field->sizes[d];
+			add_model_constraint(field, weights, coordinate, index, d);
 		}
 	}
 }

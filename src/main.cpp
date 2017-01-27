@@ -27,7 +27,7 @@
 #include "sparse_linear.hpp"
 
 VISITABLE_STRUCT(ImVec2, x, y);
-VISITABLE_STRUCT(Weights, data_pos, data_gradient, model_0, model_1, model_2, model_3);
+VISITABLE_STRUCT(Weights, data_pos, data_gradient, model_0, model_1, model_2, model_3, model_4, gradient_smoothness);
 VISITABLE_STRUCT(SolveOptions, downscale_factor, tile, tile_size, cg, error_tolerance);
 
 using Vec2List = std::vector<ImVec2>;
@@ -360,6 +360,7 @@ bool show_weights(Weights* weights)
 	changed |= ImGui::SliderFloat("f''(0) = 0 (C1 smoothness)",   &weights->model_2, 0, 1000, "%.3f", 4);
 	changed |= ImGui::SliderFloat("f'''(0) = 0 (C2 smoothness)",  &weights->model_3, 0, 1000, "%.3f", 4);
 	changed |= ImGui::SliderFloat("f''''(0) = 0 (C3 smoothness)", &weights->model_4, 0, 1000, "%.3f", 4);
+	changed |= ImGui::SliderFloat("Gradient smoothness)", &weights->gradient_smoothness, 0, 1000, "%.3f", 4);
 
 	return changed;
 }

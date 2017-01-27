@@ -36,11 +36,10 @@ The lattice coordinates go from [0, 0, ...] to [width - 1, height - 1, ...] (inc
 */
 
 /// There is no technical limit to this,
-/// but note that add_value_constraint adds 2^D equations,
-/// and add_gradient_constraint adds 2^(D+1) equations.
+/// but note that add_value_constraint adds 2^D equations.
 /// For this reason you may want to to spread your constraints
 /// with nearest-neighbor instead, if your dimensionality is high.
-const int MAX_DIM = 4;
+const int MAX_DIM = 3;
 
 /// When adding a gradient condition, how shall it be applied?
 enum class GradientKernel
@@ -74,6 +73,12 @@ struct Weights
 	float model_2       = 0.50f; ///< How much we believe the field to be smooth. If this is large you will be fitting a line to the data.
 	float model_3       = 0.00f; ///< If this is large, you will be fitting a quadratic curve to you data.
 	float model_4       = 0.00f; ///< If this is large, you will be fitting a cubic curve to you data.
+
+	/// Consider a 2D cell with corners:
+	///   A B
+	///   C D
+	/// This is then the strength of the constraints B-A==D-C and C-A=D-B.
+	float gradient_smoothness = 0.0f;
 
 	GradientKernel gradient_kernel = GradientKernel::kCellEdges;
 };
