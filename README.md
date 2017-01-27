@@ -75,25 +75,25 @@ This works surprisingly well.
 We do something similar for the lattice smoothness constraints. In 3D:
 
 ```
-	f(x + 1, y, z) - 2·f(x + 1, y, z) + f(x + 2, y, z) = 0
-	f(x, y + 1, z) - 2·f(x, y + 1, z) + f(x, y + 2, z) = 0
-	f(x, y, z + 1) - 2·f(x, y, z + 1) + f(x, y, z + 2) = 0
+	f(x, y, z) - 2·f(x+1, y,   z)   + f(x+2, y,   z)   = 0
+	f(x, y, z) - 2·f(x,   y+1, z)   + f(x,   y+2, z)   = 0
+	f(x, y, z) - 2·f(x,   y,   z+1) + f(x,   y,   z+2) = 0
 ```
 
 As the number of dimensions go up, so does the number of constraints - but not by much, and the number of of values in each equation is low, meaning the resulting equation system remains sparse, and thus fast.
 
 # Relationship to existing methods
-The method described in this article is similar to a [steady-state](https://en.wikipedia.org/wiki/Steady_state) [Finite Difference Method (FDM)](https://en.wikipedia.org/wiki/Finite_difference_method). However, in this library we apply FDM to noisy data to produce an overdetermined equation system. Adding weights to the equations allows for a linear least squares solution which approximates the field.
+The method described in this article is similar to a [steady-state](https://en.wikipedia.org/wiki/Steady_state) [Finite Difference Method (FDM)](https://en.wikipedia.org/wiki/Finite_difference_method). In FDM, the data constraints corresponds to [boundary conditions](https://en.wikipedia.org/wiki/Boundary_value_problem):
 
-* Model conditions (regularization): `f″(x) == 0` etc. A Bayesian prior to our model.
-* Data conditions (boundary conditions)
-  * Value condition `f(x) = y` ([Dirichlet boundary condition](https://en.wikipedia.org/wiki/Dirichlet_boundary_condition))
-  * Gradient condition `∇ f(x) = d` ([Neumann boundary condition](https://en.wikipedia.org/wiki/Neumann_boundary_condition))
+* Value condition `f(x) = y` ([Dirichlet boundary condition](https://en.wikipedia.org/wiki/Dirichlet_boundary_condition))
+* Gradient condition `∇ f(x) = d` ([Neumann boundary condition](https://en.wikipedia.org/wiki/Neumann_boundary_condition))
+
+However, in this library we apply FDM to noisy data to produce an overdetermined equation system. Adding weights to the equations allows for a linear least squares solution which approximates the fiel
 
 # Expample use: surface reconstruction from point samples
 A common problem in 3D scanning is reconstructing a mesh (surface) from a set of noisy surface points. We can use the methods described in this article for that by setting up a system so that:
 
-* Model condition: f″(x) = 0
+* Model constraint: f″(x) = 0
 * For each particle:
   * `f(x) = 0` (the field is zero at the surface point)
   * `∇ f(x) = n` (the gradient of the field at the surface point is the point normal)
@@ -114,8 +114,7 @@ SSD instead uses the three-dimensional gradient difference between neighboring v
 * Separate library from gui app
 
 ## Algo
-* Try adding the constraint df(x, y)/dy = df(x + 1, y)/dy etc
-* Add nearest-neighbor versions, mostly to make them easy to read and comprehend.
+* Add nearest-neighbor versions for the value constraint (taking the normal into account)
 * Sparse lattices
 
 ## Speeding up
@@ -123,6 +122,6 @@ SSD instead uses the three-dimensional gradient difference between neighboring v
 
 ## Gui
 * Use 1D to verify iso-surface positioning is perfect
-* Split back-projected error into model and data conditions.
+* Split back-projected error into model and data constraints.
 * Add several saved configs for distance field tab
 * Show several iso-curves for different iso values.
