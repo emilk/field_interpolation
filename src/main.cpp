@@ -339,7 +339,13 @@ bool show_weights(Weights* weights)
 {
 	bool changed = false;
 
-	changed |= ImGui::Checkbox("nearest-neighbor gradient interpolation", &g_nn_gradient);
+	ImGui::Text("Gradient kernel:");
+	ImGui::SameLine();
+	changed |= ImGuiPP::RadioButtonEnum("nearest-neighbor", &weights->gradient_kernel, GradientKernel::kNearestNeighbor);
+	ImGui::SameLine();
+	changed |= ImGuiPP::RadioButtonEnum("cell edges", &weights->gradient_kernel, GradientKernel::kCellEdges);
+	ImGui::SameLine();
+	changed |= ImGuiPP::RadioButtonEnum("n-linear-interpolation", &weights->gradient_kernel, GradientKernel::kLinearInteprolation);
 
 	if (ImGui::Button("Reset weights")) {
 		*weights = {};
@@ -602,7 +608,7 @@ void show_1d_field_window(Field1DInput* input)
 		float pos_lattice = point.pos * (input->resolution - 1);
 		float gradient_lattice = point.gradient / (input->resolution - 1);
 		add_value_constraint(&field, &pos_lattice, point.value, input->weights.data_pos);
-		add_gradient_constraint(&field, &pos_lattice, &gradient_lattice, input->weights.data_gradient);
+		add_gradient_constraint(&field, &pos_lattice, &gradient_lattice, input->weights.data_gradient, input->weights.gradient_kernel);
 	}
 
 	add_field_constraints(&field, input->weights);
@@ -680,7 +686,7 @@ void show_2d_field_window()
 			};
 			add_value_constraint(&field, pos, values[y * 4 + x], s_weights.data_pos);
 			const float zero[2] = {0,0};
-			add_gradient_constraint(&field, pos, zero, s_weights.data_gradient);
+			add_gradient_constraint(&field, pos, zero, s_weights.data_gradient, s_weights.gradient_kernel);
 		}
 	}
 

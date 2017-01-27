@@ -213,6 +213,7 @@ VectorXr tile_solver(
 {
 	LOG_SCOPE_F(INFO, "tile_solver");
 	CHECK_GE_F(tile_size, 2);
+	CHECK_EQ_F(guess_full.size(), Atb_full.size());
 
 	std::vector<int> num_tiles;
 	int num_tiles_total = 1;
@@ -276,8 +277,6 @@ VectorXr tile_solver(
 
 	for (int k=0; k < AtA_full.outerSize(); ++k) {
 		for (SparseMatrix::InnerIterator it(AtA_full, k); it; ++it) {
-			ERROR_CONTEXT("row", it.row());
-			ERROR_CONTEXT("col", it.col());
 			int row_tile, row_index;
 			int col_tile, col_index;
 
@@ -366,6 +365,10 @@ std::vector<float> solve_sparse_linear_approximate_lattice(
 	// ------------------------------------------------------------------------
 
 	VectorXr guess = downscale_solver(AtA, Atb, sizes, options.downscale_factor);
+
+	if (guess.size() == 0) {
+		return {};
+	}
 
 	if (options.tile) {
 		guess = tile_solver(AtA, Atb, guess, sizes, options.tile_size);

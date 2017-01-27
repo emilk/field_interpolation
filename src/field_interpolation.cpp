@@ -7,8 +7,6 @@
 
 const int TWO_TO_MAX_DIM = (1 << 4);
 
-bool g_nn_gradient = false;
-
 std::ostream& operator<<(std::ostream& os, const LinearEquation& eq)
 {
 	const size_t num_rows = eq.rhs.size();
@@ -119,24 +117,37 @@ bool add_value_constraint(
 	return true;
 }
 
+/// Return -1 on out-of-bounds
+int cell_index(const LatticeField& field, const float pos[])
+{
+	int index = 0;
+	const int num_dim = field.sizes.size();
+	for (int d = 0; d < num_dim; ++d) {
+		int pos_d = std::floor(pos[d]);
+		bool in_lattice = 0 <= pos_d && pos_d + 1 < field.sizes[d];
+		if (!in_lattice) { return -1; }
+		index += pos_d * field.strides[d];
+	}
+	return index;
+}
+
 bool add_gradient_constraint(
-	LatticeField* field,
-	const float   pos[],
-	const float   gradient[],
-	float         constraint_weight)
+	LatticeField*  field,
+	const float    pos[],
+	const float    gradient[],
+	float          constraint_weight,
+	GradientKernel kernel)
 {
 	if (constraint_weight == 0) { return false; }
 
-	if (g_nn_gradient) {
-		int num_dim = field->sizes.size();
+	// TODO: add three equations like in http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.440.3739&rep=rep1&type=pdf
 
-		int index = 0;
-		for (int d = 0; d < num_dim; ++d) {
-			int pos_d = std::floor(pos[d]);
-			bool in_lattice = 0 <= pos_d && pos_d + 1 < field->sizes[d];
-			if (!in_lattice) { return false; }
-			index += pos_d * field->strides[d];
-		}
+	if (kernel == GradientKernel::kNearestNeighbor) {
+		int index = cell_index(*field, pos);
+		if (index < 0) { return false; }
+
+		const int num_dim = field->sizes.size();
+
 		for (int d = 0; d < num_dim; ++d) {
 			// d f(x, y) / dx = gradient[0]
 			// d f(x, y) / dy = gradient[1]
@@ -147,7 +158,45 @@ bool add_gradient_constraint(
 			});
 		}
 		return true;
-	} else {
+	} else if (kernel == GradientKernel::kCellEdges) {
+		/*
+		This method was described in SSD: Smooth Signed Distance Surface Reconstruction
+		http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.440.3739&rep=rep1&type=pdf
+
+		Find the voxel cell containing the point. The voxel has the corners A, B, C, D:
+			A B
+			C D
+		Add constraints:
+			((A - B) + (D - C)) / 2 = dx
+			((C - A) + (D - B)) / 2 = dy
+
+		So this will add num_dim equations with 2^num_dim terms in each.
+		*/
+
+		int index = cell_index(*field, pos);
+		if (index < 0) { return false; }
+
+		const int num_dim = field->sizes.size();
+
+		for (int d = 0; d < num_dim; ++d) {
+			const int row = field->eq.rhs.size();
+			const int num_corners = (1 << num_dim);
+			const float term_weight = constraint_weight * 2.0f / num_corners;
+
+			for (int corner = 0; corner < num_corners; ++corner) {
+				int corner_index = index;
+				for (int oa = 0; oa < num_dim; ++oa) {
+					int is_along_oa = (corner >> oa) % 2;
+					corner_index += field->strides[oa] * is_along_oa;
+				}
+				bool is_along_d = (corner >> d) % 2;
+				float sign = is_along_d ? +1.0f : -1.0f;
+				field->eq.triplets.emplace_back(row, corner_index, sign * term_weight);
+			}
+			field->eq.rhs.emplace_back(constraint_weight * gradient[d]);
+		}
+		return true;
+	} else if (kernel == GradientKernel::kLinearInteprolation) {
 		/*
 		We spread the contribution using bilinear interpolation.
 
@@ -168,7 +217,7 @@ bool add_gradient_constraint(
 		We combine these constraints into one equation.
 		*/
 
-		int num_dim = field->sizes.size();
+		const int num_dim = field->sizes.size();
 
 		float adjusted_pos[MAX_DIM];
 		for (int d = 0; d < num_dim; ++d) {
@@ -196,6 +245,8 @@ bool add_gradient_constraint(
 		}
 
 		return true;
+	} else {
+		ABORT_F("Unknown gradient kernel: %d", static_cast<int>(kernel));
 	}
 }
 
@@ -210,7 +261,8 @@ void add_model_constraint(
 	const int size   = field->sizes[d];
 	const int stride = field->strides[d];
 
-	// TODO: dynamically compute Pascals triangle for this?
+	// These weights come from Pascal's triangle.
+	// See also https://en.wikipedia.org/wiki/Finite_difference_coefficient
 
 	if (0 <= dim_cord && dim_cord < size) {
 		// f(x) = 0
@@ -300,7 +352,7 @@ LatticeField sdf_from_points(
 		const float* pos = positions + i * num_dim;
 		add_value_constraint(&field, pos, 0.0f, weight * weights.data_pos);
 		if (normals) {
-			add_gradient_constraint(&field, pos, normals + i * num_dim, weight * weights.data_gradient);
+			add_gradient_constraint(&field, pos, normals + i * num_dim, weight * weights.data_gradient, weights.gradient_kernel);
 		}
 	}
 

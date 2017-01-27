@@ -42,7 +42,13 @@ The lattice coordinates go from [0, 0, ...] to [width - 1, height - 1, ...] (inc
 /// with nearest-neighbor instead, if your dimensionality is high.
 const int MAX_DIM = 4;
 
-extern bool g_nn_gradient;
+/// When adding a gradient condition, how shall it be applied?
+enum class GradientKernel
+{
+	kNearestNeighbor,      ///< Apply to the closest two points along each dimension
+	kCellEdges,            ///< Apply to all edges in the cell
+	kLinearInteprolation,  ///< Linear interpolation of the two closest edges along each dimension
+};
 
 /// A note about picking good parameters:
 /// If your model is continuous but with abrupt changes, use a high model_1 and low everything else.
@@ -68,6 +74,8 @@ struct Weights
 	float model_2       = 0.50f; ///< How much we believe the field to be smooth. If this is large you will be fitting a line to the data.
 	float model_3       = 0.00f; ///< If this is large, you will be fitting a quadratic curve to you data.
 	float model_4       = 0.00f; ///< If this is large, you will be fitting a cubic curve to you data.
+
+	GradientKernel gradient_kernel = GradientKernel::kCellEdges;
 };
 
 /// Sparse Ax=b where A is described by `triplets` and `rhs` is b.
@@ -127,10 +135,11 @@ bool add_value_constraint(
 /// This is a no-op if pos is close to or outside of the field.
 /// Returns false if the position was ignored.
 bool add_gradient_constraint(
-	LatticeField* field,
+	LatticeField*  field,
 	const float    pos[],
 	const float    gradient[],
-	float          weight);
+	float          weight,
+	GradientKernel kernel);
 
 /// Helper function for generating a signed distance field:
 /// The resulting distances may be scaled arbitrarily, and only accurate near field=0.
