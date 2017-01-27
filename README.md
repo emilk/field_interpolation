@@ -85,15 +85,15 @@ As the number of dimensions go up, so does the number of constraints - but not b
 # Relationship to existing methods
 The method described in this article is similar to a [steady-state](https://en.wikipedia.org/wiki/Steady_state) [Finite Difference Method (FDM)](https://en.wikipedia.org/wiki/Finite_difference_method). In FDM, the data constraints corresponds to [boundary conditions](https://en.wikipedia.org/wiki/Boundary_value_problem):
 
-* Value condition `f(x) = y` ([Dirichlet boundary condition](https://en.wikipedia.org/wiki/Dirichlet_boundary_condition))
-* Gradient condition `∇ f(x) = d` ([Neumann boundary condition](https://en.wikipedia.org/wiki/Neumann_boundary_condition))
+* Value constraint `f(x) = y` = [Dirichlet boundary condition](https://en.wikipedia.org/wiki/Dirichlet_boundary_condition)
+* Gradient constraint `∇ f(x) = d` = [Neumann boundary condition](https://en.wikipedia.org/wiki/Neumann_boundary_condition)
 
-However, in this library we apply FDM to noisy data to produce an overdetermined equation system. Adding weights to the equations allows for a linear least squares solution which approximates the fiel
+However, in this library we apply FDM to noisy data to produce an overdetermined equation system. Adding weights to the equations allows for a linear least squares solution which approximates the field.
 
 # Expample use: surface reconstruction from point samples
 A common problem in 3D scanning is reconstructing a mesh (surface) from a set of noisy surface points. We can use the methods described in this article for that by setting up a system so that:
 
-* Model constraint: f″(x) = 0
+* Smoothness constraint: `f″(x) = 0`
 * For each particle:
   * `f(x) = 0` (the field is zero at the surface point)
   * `∇ f(x) = n` (the gradient of the field at the surface point is the point normal)
@@ -108,6 +108,15 @@ The most similar work in this area is [SSD](http://citeseerx.ist.psu.edu/viewdoc
 In my work the smoothness constraint is that the gradient between neighboring edges (edges sharing a vertex in the same direction) should be zero along the direction of the edge. This adds `D·V` equations with `3` unknowns in each, where D is the dimensionality and V is the number of unknowns (voxels).
 
 SSD instead uses the three-dimensional gradient difference between neighboring voxels. In SSD the gradient is estimated from the eight voxel corners, so each such constraint touches 16 unknowns. SSD also enforces this constraint along all three dimensions (not just along the direction to the neighbor), so each end up with three constraints for each pair of neighbors, so `D²·V` constraints with `16` unknowns each. So that is three times the number of equations and more than five times the number of unknowns touched. This produces a more expensive system of equations.
+
+# The solver
+Solving a sparse linear least squares problem is a well-researched problem, which means there are many robust and fast solutions to it, both for exact solutions and for approximate ones. This library uses solvers in [Eigen](http://eigen.tuxfamily.org/index.php?title=Main_Page) with some improvements. In particular, a fast approximate solver is employed for solving large multidimensional lattices. This solver works like this:
+
+* The problem is down-scaled to a coarser level, and solved exactly. This coarse solution is then up-scaled to the original lattice size again.
+* The problem is broken up into non-overlapping tiles and solved individually. At the boundaries between tiles, the approximate solution from the downscaled solver is used. The solutions for the tiles are re-assembled in the original lattice.
+* The solution from the tiled solver is used as a starting guess to an iterative, approximate [Conjugate gradient](https://en.wikipedia.org/wiki/Conjugate_gradient_method) solver.
+
+There are probably plenty of improvement that can be done to this.
 
 # Todo
 ## Code
