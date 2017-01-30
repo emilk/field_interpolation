@@ -53,15 +53,23 @@ struct Shape
 
 VISITABLE_STRUCT(Shape, inverted, num_points, lopsidedness, center, radius, circleness, polygon_sides, rotation);
 
+struct NoiseOptions
+{
+	int    seed          = 0;
+	float  pos_stddev    = 0.005f;
+	float  normal_stddev = 0.05f;
+	size_t outliers      = 0;
+};
+
+VISITABLE_STRUCT(NoiseOptions, seed, pos_stddev, normal_stddev, outliers);
+
 struct Options
 {
-	int                seed             =  0;
-	size_t             resolution       = 24;
+	NoiseOptions       noise;
+	size_t             resolution  = 24;
 	std::vector<Shape> shapes;
-	float              pos_noise        =  0.005f;
-	float              dir_noise        =  0.05f;
 	Weights            weights;
-	bool               exact_solve      = false;
+	bool               exact_solve = false;
 	SolveOptions       solve_options;
 
 	Options()
@@ -77,7 +85,7 @@ struct Options
 	}
 };
 
-VISITABLE_STRUCT(Options, seed, resolution, shapes, pos_noise, dir_noise, weights, exact_solve, solve_options);
+VISITABLE_STRUCT(Options, noise, resolution, shapes, weights, exact_solve, solve_options);
 
 struct Result
 {
@@ -153,13 +161,7 @@ auto shape_point(const Shape& shape, Dualf t)
 	Dualf x = math::lerp(poly_x, circle_x, shape.circleness);
 	Dualf y = math::lerp(poly_y, circle_y, shape.circleness);
 
-	float dx = x.eps;
-	float dy = y.eps;
-	float normal_norm = std::hypot(dx, dy);
-	dx /= normal_norm;
-	dy /= normal_norm;
-
-	return std::make_pair(ImVec2(x.real, y.real), ImVec2(dy, -dx));
+	return std::make_pair(ImVec2(x.real, y.real), ImVec2(y.eps, -x.eps));
 }
 
 void generate_points(
@@ -243,11 +245,11 @@ auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Opti
 	return std::make_tuple(field, sdf);
 }
 
-void perturb_points(Vec2List* positions, Vec2List* normals, const Options& options)
+void perturb_points(Vec2List* positions, Vec2List* normals, const NoiseOptions& options)
 {
 	std::default_random_engine rng(options.seed);
-	std::normal_distribution<float> pos_noise(0.0, options.pos_noise);
-	std::normal_distribution<float> dir_noise(0.0, options.dir_noise);
+	std::normal_distribution<float> pos_noise(0.0, options.pos_stddev);
+	std::normal_distribution<float> dir_noise(0.0, options.normal_stddev);
 
 	for (auto& pos : *positions) {
 		pos.x += pos_noise(rng);
@@ -258,6 +260,17 @@ void perturb_points(Vec2List* positions, Vec2List* normals, const Options& optio
 		angle += dir_noise(rng);
 		normal.x += std::cos(angle);
 		normal.y += std::sin(angle);
+	}
+
+	std::uniform_real_distribution<float> random_pos(0.0f, 1.0f);
+	std::normal_distribution<float> random_normal;
+	for (size_t i = 0; i < options.outliers; ++i) {
+		positions->emplace_back(random_pos(rng), random_pos(rng));
+		normals->emplace_back(random_normal(rng), random_normal(rng));
+	}
+
+	for (auto& normal : *normals) {
+		normal /= std::hypot(normal.x, normal.y);
 	}
 }
 
@@ -273,7 +286,7 @@ Result generate(const Options& options)
 	for (const auto& shape : options.shapes) {
 		generate_points(&result.point_positions, &result.point_normals, shape, 0);
 	}
-	perturb_points(&result.point_positions, &result.point_normals, options);
+	perturb_points(&result.point_positions, &result.point_normals, options.noise);
 
 	Vec2List lattice_positions;
 
@@ -383,6 +396,21 @@ bool show_solve_options(SolveOptions* options)
 	return changed;
 }
 
+bool show_noise_options(NoiseOptions* options)
+{
+	bool changed = false;
+	ImGui::PushItemWidth(ImGui::GetWindowContentRegionWidth() * 0.3f);
+	ImGui::Text("Noise:");
+	changed |= ImGui::SliderInt("seed      ", &options->seed, 0, 100);
+	ImGui::SameLine();
+	changed |= ImGuiPP::SliderSize("outliers", &options->outliers, 0, 50);
+	changed |= ImGui::SliderFloat("pos_stddev", &options->pos_stddev, 0,   0.1, "%.4f");
+	ImGui::SameLine();
+	changed |= ImGui::SliderAngle("normal_stddev", &options->normal_stddev, 0, 360);
+	ImGui::PopItemWidth();
+	return changed;
+}
+
 bool show_options(Options* options)
 {
 	bool changed = false;
@@ -391,7 +419,6 @@ bool show_options(Options* options)
 		*options = {};
 		changed = true;
 	}
-	changed |= ImGui::SliderInt("seed", &options->seed, 0, 100);
 	changed |= ImGuiPP::SliderSize("resolution", &options->resolution, 4, 256);
 	ImGui::Separator();
 	for (const int i : emilib::indices(options->shapes)) {
@@ -410,8 +437,7 @@ bool show_options(Options* options)
 		changed = true;
 	}
 	ImGui::Separator();
-	changed |= ImGui::SliderFloat("pos_noise", &options->pos_noise, 0,   0.1, "%.4f");
-	changed |= ImGui::SliderAngle("dir_noise", &options->dir_noise, 0, 360);
+	changed |= show_noise_options(&options->noise);
 	ImGui::Separator();
 	changed |= show_weights(&options->weights);
 
@@ -835,13 +861,13 @@ struct FieldGui
 void show_sdf_fields(FieldGui* field_gui)
 {
 	if (ImGui::Begin("2D SDF")) {
-		ImGui::BeginChild("Input", ImVec2(ImGui::GetWindowContentRegionWidth() * 0.3f, 0), true);
+		ImGui::BeginChild("Input", ImVec2(ImGui::GetWindowContentRegionWidth() * 0.35f, 0), true);
 		field_gui->show_input();
 		ImGui::EndChild();
 
 		ImGui::SameLine();
 
-		ImGui::BeginChild("Output", ImVec2(ImGui::GetWindowContentRegionWidth() * 0.7f, 0), true);
+		ImGui::BeginChild("Output", ImVec2(ImGui::GetWindowContentRegionWidth() * 0.65f, 0), true);
 		field_gui->show_result();
 		ImGui::EndChild();
 	}
