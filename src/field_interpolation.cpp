@@ -59,8 +59,9 @@ int multilerp(
 	const float         in_pos[],
 	int                 extra_bound)
 {
-	int num_dim = field.sizes.size();
+	const int num_dim = field.num_dim();
 	CHECK_F(1 <= num_dim && num_dim <= MAX_DIM);
+
 	int floored[MAX_DIM];
 	float t[MAX_DIM];
 
@@ -121,7 +122,7 @@ bool add_value_constraint(
 int cell_index(const LatticeField& field, const float pos[])
 {
 	int index = 0;
-	const int num_dim = field.sizes.size();
+	const int num_dim = field.num_dim();
 	for (int d = 0; d < num_dim; ++d) {
 		int pos_d = std::floor(pos[d]);
 		bool in_lattice = 0 <= pos_d && pos_d + 1 < field.sizes[d];
@@ -328,7 +329,7 @@ void add_model_constraint(
 
 void coordinate_from_index(const LatticeField& field, int coordinate[MAX_DIM], int index)
 {
-	for (int d = 0; d < field.sizes.size(); ++d) {
+	for (int d = 0; d < field.num_dim(); ++d) {
 		coordinate[d] = index % field.sizes[d];
 		index /= field.sizes[d];
 	}
@@ -359,7 +360,7 @@ LatticeField sdf_from_points(
 	const float*            normals,
 	const float*            point_weights)
 {
-	LOG_SCOPE_F(INFO, "sdf_from_points");
+	LOG_SCOPE_F(1, "sdf_from_points");
 	CHECK_NOTNULL_F(positions);
 
 	int num_dim = sizes.size();

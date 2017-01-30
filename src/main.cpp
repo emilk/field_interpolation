@@ -219,7 +219,7 @@ float area(const std::vector<Shape>& shapes)
 
 auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Options& options)
 {
-	LOG_SCOPE_F(INFO, "generate_sdf");
+	LOG_SCOPE_F(1, "generate_sdf");
 	CHECK_EQ_F(positions.size(), normals.size());
 
 	const int width = options.resolution;
@@ -258,8 +258,8 @@ void perturb_points(Vec2List* positions, Vec2List* normals, const NoiseOptions& 
 	for (auto& normal : *normals) {
 		float angle = std::atan2(normal.y, normal.x);
 		angle += dir_noise(rng);
-		normal.x += std::cos(angle);
-		normal.y += std::sin(angle);
+		normal.x = std::cos(angle);
+		normal.y = std::sin(angle);
 	}
 
 	std::uniform_real_distribution<float> random_pos(0.0f, 1.0f);

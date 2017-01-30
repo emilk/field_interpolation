@@ -114,6 +114,8 @@ struct LatticeField
 			stride *= size;
 		}
 	}
+
+	int num_dim() const { return static_cast<int>(sizes.size()); }
 };
 
 struct Weight { float value; };
