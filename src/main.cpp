@@ -870,6 +870,9 @@ int main(int argc, char* argv[])
 			if (event.type == SDL_QUIT) { quit = true; }
 			imgui_sdl.on_event(event);
 		}
+		gl::TempViewPort::set_back_buffer_size(
+			math::round_to_int(imgui_sdl.width_pixels()),
+			math::round_to_int(imgui_sdl.height_pixels()));
 		imgui_sdl.new_frame();
 
 		ImGui::ShowTestWindow();
