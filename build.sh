@@ -2,11 +2,9 @@ set -eu
 
 if [ ! -z ${1+x} ] && [ $1 == "clean" ]; then
 	rm -rf build/
-	rm *.bin
+	rm -f *.bin
 	exit 0
 fi
-
-git submodule update --init --recursive
 
 mkdir -p build
 
