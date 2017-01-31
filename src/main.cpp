@@ -21,13 +21,16 @@
 #include <emilib/timer.hpp>
 #include <loguru.hpp>
 
-#include "field_interpolation.hpp"
+#include <field_interpolation/field_interpolation.hpp>
+#include <field_interpolation/sparse_linear.hpp>
+
 #include "serialize_configuru.hpp"
-#include "sparse_linear.hpp"
+
+namespace fi = field_interpolation;
 
 VISITABLE_STRUCT(ImVec2, x, y);
-VISITABLE_STRUCT(Weights, data_pos, data_gradient, model_0, model_1, model_2, model_3, model_4, gradient_smoothness);
-VISITABLE_STRUCT(SolveOptions, downscale_factor, tile, tile_size, cg, error_tolerance);
+VISITABLE_STRUCT(fi::Weights, data_pos, data_gradient, model_0, model_1, model_2, model_3, model_4, gradient_smoothness);
+VISITABLE_STRUCT(fi::SolveOptions, downscale_factor, tile, tile_size, cg, error_tolerance);
 
 using Vec2List = std::vector<ImVec2>;
 
@@ -68,9 +71,9 @@ struct Options
 	NoiseOptions       noise;
 	size_t             resolution  = 24;
 	std::vector<Shape> shapes;
-	Weights            weights;
+	fi::Weights        weights;
 	bool               exact_solve = false;
-	SolveOptions       solve_options;
+	fi::SolveOptions   solve_options;
 
 	Options()
 	{
@@ -91,7 +94,7 @@ struct Result
 {
 	Vec2List           point_positions;
 	Vec2List           point_normals;
-	LatticeField       field;
+	fi::LatticeField   field;
 	std::vector<float> sdf;
 	std::vector<float> heatmap;
 	std::vector<RGBA>  sdf_image;
@@ -347,17 +350,17 @@ bool show_shape_options(Shape* shape)
 	return changed;
 }
 
-bool show_weights(Weights* weights)
+bool show_weights(fi::Weights* weights)
 {
 	bool changed = false;
 
 	ImGui::Text("Gradient kernel:");
 	ImGui::SameLine();
-	changed |= ImGuiPP::RadioButtonEnum("nearest-neighbor", &weights->gradient_kernel, GradientKernel::kNearestNeighbor);
+	changed |= ImGuiPP::RadioButtonEnum("nearest-neighbor", &weights->gradient_kernel, fi::GradientKernel::kNearestNeighbor);
 	ImGui::SameLine();
-	changed |= ImGuiPP::RadioButtonEnum("cell edges", &weights->gradient_kernel, GradientKernel::kCellEdges);
+	changed |= ImGuiPP::RadioButtonEnum("cell edges", &weights->gradient_kernel, fi::GradientKernel::kCellEdges);
 	ImGui::SameLine();
-	changed |= ImGuiPP::RadioButtonEnum("n-linear-interpolation", &weights->gradient_kernel, GradientKernel::kLinearInteprolation);
+	changed |= ImGuiPP::RadioButtonEnum("n-linear-interpolation", &weights->gradient_kernel, fi::GradientKernel::kLinearInteprolation);
 
 	if (ImGui::Button("Reset weights")) {
 		*weights = {};
@@ -377,7 +380,7 @@ bool show_weights(Weights* weights)
 	return changed;
 }
 
-bool show_solve_options(SolveOptions* options)
+bool show_solve_options(fi::SolveOptions* options)
 {
 	bool changed = false;
 	if (ImGui::Button("Reset solve options")) {
@@ -550,7 +553,7 @@ void show_outline(
 	}
 }
 
-void show_field_equations(const LatticeField& field)
+void show_field_equations(const fi::LatticeField& field)
 {
 	std::stringstream ss;
 	ss << field.eq;
@@ -573,7 +576,7 @@ struct Field1DInput
 	};
 
 	int resolution = 12;
-	Weights weights;
+	fi::Weights weights;
 };
 VISITABLE_STRUCT(Field1DInput, points, resolution, weights);
 
@@ -629,7 +632,7 @@ void show_1d_field_window(Field1DInput* input)
 		configuru::dump_file("1d_field.json", to_config(*input), configuru::JSON);
 	}
 
-	LatticeField field{{input->resolution}};
+	fi::LatticeField field{{input->resolution}};
 
 	for (const auto& point : input->points) {
 		float pos_lattice = point.pos * (input->resolution - 1);
@@ -696,13 +699,13 @@ void show_2d_field_window()
 	};
 
 	static int         s_resolution = 64;
-	static Weights     s_weights;
+	static fi::Weights     s_weights;
 	static gl::Texture s_texture{"2d_field", gl::TexParams::clamped_nearest()};
 
 	ImGui::SliderInt("resolution", &s_resolution, 4, 64);
 	show_weights(&s_weights);
 
-	LatticeField field{{s_resolution, s_resolution}};
+	fi::LatticeField field{{s_resolution, s_resolution}};
 	add_field_constraints(&field, s_weights);
 
 	for (int y = 0; y < 4; ++y) {

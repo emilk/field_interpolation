@@ -1,6 +1,9 @@
 # Field interpolation using the finite difference method
 A method for interpolating sparse and/or noisy data in one or several dimensions. Can be used to generate a signed distance field from a point cloud.
 
+# Code structure
+The library is in `field_interpolation/`. `src/` contains an example app.
+
 # Description
 ## Introduction
 Say we want to approximate some function `f(x) = y`. We have some *data* about the function. Value data (e.g. `f(0) = 4` and `f(5) = 2`) and (optionally) gradient data (e.g. `f′(0) = 1` and `f′(5) = -1)`. We can also make assumptions about the *model* (how the function behaves). We can, for instance, assume that the function is smooth: `f″(x) = 0`. Let us now approximate the function `f` as values on a [lattice](https://en.wikipedia.org/wiki/Lattice_(group)) (i.e. a grid). For this example, let us use six lattice points in the inclusive range `[0, 5]`. We can approximate the gradient of the field as `f′(x) = f(⌊x⌋+1) - f(⌊x⌋)`. The smoothness constraint thus becomes `f(n + 1) - f(n) = f(n + 2) - f(n)` for each lattice point. Let's write down all our constraints in the above example:
@@ -119,9 +122,6 @@ Solving a sparse linear least squares problem is a well-researched problem, whic
 There are probably plenty of improvement that can be done to this.
 
 # Todo
-## Code
-* Separate library from gui app
-
 ## Algo
 * Add nearest-neighbor versions for the value constraint (taking the normal into account)
 * Sparse lattices

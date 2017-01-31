@@ -1,12 +1,12 @@
-[submodule "libs/emilib"]
-	path = libs/emilib
-	url = git@github.com:emilk/emilib.git
-[submodule "libs/imgui"]
-	path = libs/imgui
-	url = git@github.com:ocornut/imgui.git
-[submodule "libs/stb"]
-	path = libs/stb
-	url = git@github.com:nothings/stb.git
-[submodule "libs/visit_struct"]
-	path = libs/visit_struct
+[submodule "third_party/visit_struct"]
+	path = third_party/visit_struct
 	url = git@github.com:cbeck88/visit_struct.git
+[submodule "third_party/stb"]
+	path = third_party/stb
+	url = git@github.com:nothings/stb.git
+[submodule "third_party/imgui"]
+	path = third_party/imgui
+	url = git@github.com:ocornut/imgui.git
+[submodule "third_party/emilib"]
+	path = third_party/emilib
+	url = git@github.com:emilk/emilib.git

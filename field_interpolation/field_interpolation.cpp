@@ -5,6 +5,8 @@
 
 #include <loguru.hpp>
 
+namespace field_interpolation {
+
 const int TWO_TO_MAX_DIM = (1 << 4);
 
 std::ostream& operator<<(std::ostream& os, const LinearEquation& eq)
@@ -408,3 +410,5 @@ std::vector<float> generate_error_map(
 
 	return heatmap;
 }
+
+} // namespace field_interpolation

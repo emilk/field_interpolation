@@ -5,6 +5,8 @@
 
 #include "sparse_linear.hpp"
 
+namespace field_interpolation {
+
 /*
 This library helps you set up a sparse linear system to estimate a field from a set of constraints.
 The field will be represented by a square lattice (a grid).
@@ -165,3 +167,5 @@ std::vector<float> generate_error_map(
 	const std::vector<Triplet>& triplets,
 	const std::vector<float>&   solution,
 	const std::vector<float>&   rhs);
+
+} // namespace field_interpolation

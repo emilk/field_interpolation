@@ -1,3 +1,3 @@
 set -eu
 ./build.sh
-./field_interpolation.bin $@
+./field_interpolation_gui.bin $@

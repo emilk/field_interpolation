@@ -6,6 +6,8 @@
 
 #include <loguru.hpp>
 
+namespace field_interpolation {
+
 using VectorXr = Eigen::Matrix<float, Eigen::Dynamic, 1>;
 using SparseMatrix = Eigen::SparseMatrix<float>;
 
@@ -395,3 +397,5 @@ std::vector<float> solve_sparse_linear_approximate_lattice(
 
 	return as_std_vector(solution);
 }
+
+} // namespace field_interpolation

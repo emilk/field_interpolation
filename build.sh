@@ -11,7 +11,7 @@ mkdir -p build
 CXX=g++
 CPPFLAGS="--std=c++14 -Wall -Wpedantic -Wno-gnu-zero-variadic-macro-arguments -g -DNDEBUG"
 CPPFLAGS="$CPPFLAGS -O2"
-COMPILE_FLAGS="$CPPFLAGS -I libs -I libs/emilib -I libs/visit_struct/include"
+COMPILE_FLAGS="$CPPFLAGS -I . -I third_party -I third_party/emilib -I third_party/visit_struct/include"
 LDLIBS="-lstdc++ -lpthread -ldl"
 LDLIBS="$LDLIBS -lSDL2 -lGLEW"
 # LDLIBS="$LDLIBS -ljemalloc"
@@ -41,4 +41,4 @@ done
 wait
 
 echo >&2 "Linking..."
-$CXX $CPPFLAGS $OBJECTS $LDLIBS -o field_interpolation.bin
+$CXX $CPPFLAGS $OBJECTS $LDLIBS -o field_interpolation_gui.bin

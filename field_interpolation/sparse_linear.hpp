@@ -2,6 +2,8 @@
 
 #include <vector>
 
+namespace field_interpolation {
+
 struct Triplet
 {
 	int row, col;
@@ -43,3 +45,5 @@ std::vector<float> solve_sparse_linear_approximate_lattice(
 	const std::vector<float>&   rhs,
 	const std::vector<int>&     sizes_full,
 	const SolveOptions&         options);
+
+} // namespace field_interpolation
