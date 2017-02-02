@@ -128,8 +128,13 @@ There are probably plenty of improvement that can be done to this.
 
 ## Speeding up
 * Coarse first, scale up, re-run on elements with large errors, keep smooth fixed (sparse)
+* Take resolution into account to adjust smoothness constraints.
 
 ## Gui
 * Use 1D to verify iso-surface positioning is perfect
 * Split back-projected error into model and data constraints.
 * Add several saved configs for distance field tab
+* Show circumference comparison
+* Add slider for keeping gradient_smoothness slider same as C1 smoothness slider
+* Add 1D window with sine and noise
+* Clean up the different examples into separate files and similar structure
