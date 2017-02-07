@@ -46,7 +46,7 @@ for source_path in src/*.cpp; do
 	rel_source_path=${source_path#src/} # Remove src/ path prefix
 	obj_path="build/${rel_source_path%.cpp}.o"
 	OBJECTS="$OBJECTS $obj_path"
-	if [ ! -f $obj_path ] || [ $obj_path -ot $source_path ]; then
+	if [ ! -f $obj_path ] || [ $obj_path -ot $source_path ] || [ $obj_path -ot $0 ]; then
 		echo >&2 "Compiling $source_path to $obj_path..."
 		rm -f $obj_path
 		$CXX $COMPILE_FLAGS -c $source_path -o $obj_path &
