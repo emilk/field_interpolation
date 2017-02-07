@@ -9,7 +9,11 @@ fi
 mkdir -p build
 
 CXX=g++
-CPPFLAGS="--std=c++14 -Wall -Wpedantic -Wno-gnu-zero-variadic-macro-arguments -g -DNDEBUG"
+CPPFLAGS="--std=c++14 -Wall -Wpedantic -g -DNDEBUG"
+CPPFLAGS="$CPPFLAGS -Werror"
+# CPPFLAGS="$CPPFLAGS -Wno-gnu-zero-variadic-macro-arguments" # Loguru
+CPPFLAGS="$CPPFLAGS -Wno-sign-compare"
+CPPFLAGS="$CPPFLAGS -Wno-maybe-uninitialized" # stb
 CPPFLAGS="$CPPFLAGS -O2"
 COMPILE_FLAGS="$CPPFLAGS -I . -I third_party -I third_party/emilib -I third_party/visit_struct/include"
 LDLIBS="-lstdc++ -lpthread -ldl"
