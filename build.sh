@@ -11,9 +11,20 @@ mkdir -p build
 CXX=g++
 CPPFLAGS="--std=c++14 -Wall -Wpedantic -g -DNDEBUG"
 CPPFLAGS="$CPPFLAGS -Werror"
-# CPPFLAGS="$CPPFLAGS -Wno-gnu-zero-variadic-macro-arguments" # Loguru
 CPPFLAGS="$CPPFLAGS -Wno-sign-compare"
-CPPFLAGS="$CPPFLAGS -Wno-maybe-uninitialized" # stb
+
+# Check if clang:
+$CXX --version 2>/dev/null | grep clang > /dev/null
+if [ $? ]; then
+	# Clang:
+	CPPFLAGS="$CPPFLAGS -Wno-gnu-zero-variadic-macro-arguments" # Loguru
+	CPPFLAGS="$CPPFLAGS -Wno-format-pedantic" # Imgui
+	CPPFLAGS="$CPPFLAGS -Wno-#warnings" # emilib
+else
+	# GCC:
+	CPPFLAGS="$CPPFLAGS -Wno-maybe-uninitialized" # stb
+fi
+
 CPPFLAGS="$CPPFLAGS -O2"
 COMPILE_FLAGS="$CPPFLAGS -I . -I third_party -I third_party/emilib -I third_party/visit_struct/include"
 LDLIBS="-lstdc++ -lpthread -ldl"
