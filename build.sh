@@ -49,7 +49,7 @@ for source_path in src/*.cpp; do
 	if [ ! -f $obj_path ] || [ $obj_path -ot $source_path ] || [ $obj_path -ot $0 ]; then
 		echo >&2 "Compiling $source_path to $obj_path..."
 		rm -f $obj_path
-		$CXX $COMPILE_FLAGS -c $source_path -o $obj_path &
+		$CXX $COMPILE_FLAGS -c $source_path -o $obj_path && echo "$source_path compiled." &
 	fi
 done
 
