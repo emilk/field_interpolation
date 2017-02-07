@@ -43,6 +43,13 @@ The lattice coordinates go from [0, 0, ...] to [width - 1, height - 1, ...] (inc
 /// with nearest-neighbor instead, if your dimensionality is high.
 const int MAX_DIM = 3;
 
+/// When adding a value condition, how shall it be applied?
+enum class ValueKernel
+{
+	kNearestNeighbor,      ///< Apply to the closest point using gradient
+	kLinearInterpolation,  ///< Linear interpolation of the closest lattice points
+};
+
 /// When adding a gradient condition, how shall it be applied?
 enum class GradientKernel
 {
@@ -83,6 +90,7 @@ struct Weights
 	/// This seem to improve the iso-lines for large positive distances, but adds a lot of equations.
 	float gradient_smoothness = 0.0f;
 
+	ValueKernel value_kernel = ValueKernel::kLinearInterpolation;
 	GradientKernel gradient_kernel = GradientKernel::kCellEdges;
 };
 
@@ -116,6 +124,18 @@ void add_field_constraints(
 bool add_value_constraint(
 	LatticeField* field,
 	const float   pos[],
+	float         value,
+	float         weight);
+
+/// Adds the constraint f(pos) = value to the nearest to the nearest lattice point,
+/// but with an offset that depends on the given gradient and the distance to the lattice point.
+/// In many cases this can be used instead of add_value_constraint to create a less dense
+/// equation system that can be solved quicker.
+/// Returns false iff the point is outside of the field.
+bool add_value_constraint_nearest_neighbor(
+	LatticeField* field,
+	const float   pos[],
+	const float   gradient[],
 	float         value,
 	float         weight);
 

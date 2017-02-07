@@ -72,7 +72,7 @@ struct Options
 	size_t             resolution  = 24;
 	std::vector<Shape> shapes;
 	fi::Weights        weights;
-	bool               exact_solve = false;
+	bool               exact_solve = true;
 	int                downscale_factor = 3;
 	fi::SolveOptions   solve_options;
 
@@ -381,13 +381,27 @@ bool show_weights(fi::Weights* weights)
 {
 	bool changed = false;
 
-	ImGui::Text("Gradient kernel:");
-	ImGui::SameLine();
-	changed |= ImGuiPP::RadioButtonEnum("nearest-neighbor", &weights->gradient_kernel, fi::GradientKernel::kNearestNeighbor);
-	ImGui::SameLine();
-	changed |= ImGuiPP::RadioButtonEnum("cell edges", &weights->gradient_kernel, fi::GradientKernel::kCellEdges);
-	ImGui::SameLine();
-	changed |= ImGuiPP::RadioButtonEnum("n-linear-interpolation", &weights->gradient_kernel, fi::GradientKernel::kLinearInterpolation);
+	{
+		ImGui::PushID("Value kernel");
+		ImGui::Text("Value kernel:");
+		ImGui::SameLine();
+		changed |= ImGuiPP::RadioButtonEnum("nearest-neighbor", &weights->value_kernel, fi::ValueKernel::kNearestNeighbor);
+		ImGui::SameLine();
+		changed |= ImGuiPP::RadioButtonEnum("n-linear-interpolation", &weights->value_kernel, fi::ValueKernel::kLinearInterpolation);
+		ImGui::PopID();
+	}
+
+	{
+		ImGui::PushID("Gradient kernel");
+		ImGui::Text("Gradient kernel:");
+		ImGui::SameLine();
+		changed |= ImGuiPP::RadioButtonEnum("nearest-neighbor", &weights->gradient_kernel, fi::GradientKernel::kNearestNeighbor);
+		ImGui::SameLine();
+		changed |= ImGuiPP::RadioButtonEnum("cell edges", &weights->gradient_kernel, fi::GradientKernel::kCellEdges);
+		ImGui::SameLine();
+		changed |= ImGuiPP::RadioButtonEnum("n-linear-interpolation", &weights->gradient_kernel, fi::GradientKernel::kLinearInterpolation);
+		ImGui::PopID();
+	}
 
 	if (ImGui::Button("Reset weights")) {
 		*weights = {};

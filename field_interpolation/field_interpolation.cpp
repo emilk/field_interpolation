@@ -79,6 +79,32 @@ bool add_value_constraint(
 	return true;
 }
 
+bool add_value_constraint_nearest_neighbor(
+	LatticeField* field,
+	const float   pos[],
+	const float   gradient[],
+	float         value,
+	float         weight)
+{
+	int num_dim = field->num_dim();
+
+	int nearest_index = 0;
+	float dist_along_gradient = 0;
+
+	for (int d = 0; d < num_dim; ++d) {
+		int nearest_d = std::round(pos[d]);
+		if (nearest_d < 0 || field->sizes[d] <= nearest_d) {
+			return false;
+		}
+		dist_along_gradient += (pos[d] - nearest_d) * gradient[d];
+		nearest_index += nearest_d * field->strides[d];
+	}
+
+	add_equation(&field->eq, Weight{weight}, {value - dist_along_gradient}, {
+		{nearest_index, 1.0f}
+	});
+}
+
 /// Return -1 on out-of-bounds
 int cell_index(const LatticeField& field, const float pos[])
 {
@@ -332,9 +358,16 @@ LatticeField sdf_from_points(
 	for (int i = 0; i < num_points; ++i) {
 		float weight = point_weights ? point_weights[i] : 1.0f;
 		const float* pos = positions + i * num_dim;
-		add_value_constraint(&field, pos, 0.0f, weight * weights.data_pos);
+		const float* gradient = normals + i * num_dim;
+		if (weights.value_kernel == ValueKernel::kNearestNeighbor) {
+			CHECK_NOTNULL_F(normals);
+			add_value_constraint_nearest_neighbor(&field, pos, gradient, 0.0f, weight * weights.data_pos);
+		} else {
+			add_value_constraint(&field, pos, 0.0f, weight * weights.data_pos);
+		}
+
 		if (normals) {
-			add_gradient_constraint(&field, pos, normals + i * num_dim, weight * weights.data_gradient, weights.gradient_kernel);
+			add_gradient_constraint(&field, pos, gradient, weight * weights.data_gradient, weights.gradient_kernel);
 		}
 	}
 

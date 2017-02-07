@@ -123,7 +123,6 @@ There are probably plenty of improvement that can be done to this.
 
 # Todo
 ## Algo
-* Add nearest-neighbor versions for the value constraint (taking the normal into account)
 * Sparse lattices
 
 ## Speeding up
@@ -136,5 +135,7 @@ There are probably plenty of improvement that can be done to this.
 * Add several saved configs for distance field tab
 * Show circumference comparison
 * Add slider for keeping gradient_smoothness slider same as C1 smoothness slider
-* Add 1D window with sine and noise
+
+## Code
+* Proper build system
 * Clean up the different examples into separate files and similar structure
