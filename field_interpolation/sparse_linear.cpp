@@ -8,11 +8,55 @@
 
 namespace field_interpolation {
 
+std::ostream& operator<<(std::ostream& os, const LinearEquation& eq)
+{
+	const size_t num_rows = eq.rhs.size();
+	std::vector<std::vector<Triplet>> row_triplets(num_rows);
+
+	for (const auto& triplet : eq.triplets) {
+		row_triplets[triplet.row].push_back(triplet);
+	}
+
+	for (size_t row = 0; row < num_rows; ++row) {
+		os << eq.rhs[row] << " = ";
+		for (size_t triplet_idx = 0; triplet_idx < row_triplets[row].size(); ++triplet_idx) {
+			const auto& triplet = row_triplets[row][triplet_idx];
+			os << triplet.value << " * x" << triplet.col;
+			if (triplet_idx + 1 < row_triplets[row].size()) {
+				os  << "  +  ";
+			}
+		}
+		os << "\n";
+	}
+	return os;
+}
+
+void add_equation(
+	LinearEquation* eq, Weight weight, Rhs rhs, std::initializer_list<LinearEquationPair> pairs)
+{
+	if (weight.value == 0) { return; }
+
+	// bool all_zero = rhs == 0;
+	bool all_zero = true;
+	int row = eq->rhs.size();
+	for (const auto& pair : pairs) {
+		if (pair.value != 0) {
+			eq->triplets.emplace_back(row, pair.column, pair.value * weight.value);
+			all_zero = false;
+		}
+	}
+	if (!all_zero) {
+		eq->rhs.emplace_back(rhs.value * weight.value);
+	}
+}
+
+// ----------------------------------------------------------------------------
+
 using VectorXr = Eigen::Matrix<float, Eigen::Dynamic, 1>;
 using SparseMatrix = Eigen::SparseMatrix<float>;
 
 SparseMatrix as_sparse_matrix(
-    const std::vector<Triplet>& triplets, size_t num_rows, size_t num_columns)
+	const std::vector<Triplet>& triplets, size_t num_rows, size_t num_columns)
 {
 	LOG_SCOPE_F(1, "as_sparse_matrix");
 
@@ -60,20 +104,17 @@ SparseMatrix make_square(const SparseMatrix& A)
 	return AtA;
 }
 
-std::vector<float> solve_sparse_linear(
-	int                         num_columns,
-	const std::vector<Triplet>& triplets,
-	const std::vector<float>&   rhs)
+std::vector<float> solve_sparse_linear(const LinearEquation& eq, int num_columns)
 {
 	LOG_SCOPE_F(1, "solve_sparse_linear");
-	const SparseMatrix A = as_sparse_matrix(triplets, rhs.size(), num_columns);
+	const SparseMatrix A = as_sparse_matrix(eq.triplets, eq.rhs.size(), num_columns);
 	const SparseMatrix AtA = make_square(A);
-	const VectorXr Atb = A.transpose() * as_eigen_vector(rhs);
+	const VectorXr Atb = A.transpose() * as_eigen_vector(eq.rhs);
 
 	LOG_F(1, "A nnz: %lu (%.3f%%)", A.nonZeros(),
-	      100.0f * A.nonZeros() / (A.rows() * A.cols()));
+		  100.0f * A.nonZeros() / (A.rows() * A.cols()));
 	LOG_F(1, "AtA nnz: %lu (%.3f%%)", AtA.nonZeros(),
-	      100.0f * AtA.nonZeros() / (AtA.rows() * AtA.cols()));
+		  100.0f * AtA.nonZeros() / (AtA.rows() * AtA.cols()));
 
 	LOG_SCOPE_F(1, "Solve");
 	// Resolution 177, 2 x 100k points
@@ -91,7 +132,6 @@ std::vector<float> solve_sparse_linear(
 	}
 
 	VectorXr solution = solver.solve(Atb);
-	// VectorXr solution = solver.solve(as_eigen_vector(rhs));
 
 	if (solver.info() != Eigen::Success) {
 		// std::string error = solver.lastErrorMessage();
@@ -104,16 +144,15 @@ std::vector<float> solve_sparse_linear(
 }
 
 std::vector<float> solve_sparse_linear_with_guess(
-	const std::vector<Triplet>& triplets,
-	const std::vector<float>&   rhs,
-	const std::vector<float>&   guess,
-	float                       error_tolerance)
+	const LinearEquation&     eq,
+	const std::vector<float>& guess,
+	float                     error_tolerance)
 {
 	LOG_SCOPE_F(1, "solve_sparse_linear_with_guess");
 
-	const SparseMatrix A = as_sparse_matrix(triplets, rhs.size(), guess.size());
+	const SparseMatrix A = as_sparse_matrix(eq.triplets, eq.rhs.size(), guess.size());
 	const SparseMatrix AtA = make_square(A);
-	const VectorXr Atb = A.transpose() * as_eigen_vector(rhs);
+	const VectorXr Atb = A.transpose() * as_eigen_vector(eq.rhs);
 
 	LOG_SCOPE_F(1, "solveWithGuess");
 	Eigen::BiCGSTAB<SparseMatrix> solver(AtA);
@@ -129,78 +168,6 @@ std::vector<float> solve_sparse_linear_with_guess(
 	}
 
 	return as_std_vector(solution);
-}
-
-VectorXr downscale_solver(
-	const SparseMatrix&     AtA_full,
-	const VectorXr&         Atb_full,
-	const std::vector<int>& sizes_full,
-	int                     downscale_factor)
-{
-	LOG_SCOPE_F(1, "downscale_solver");
-	CHECK_GE_F(downscale_factor, 2);
-
-	std::vector<int> sizes_small;
-	int num_unknowns_small = 1;
-	for (int size_full : sizes_full) {
-		sizes_small.push_back((size_full + downscale_factor - 1) / downscale_factor);
-		num_unknowns_small *= sizes_small.back();
-	}
-
-	const auto as_small_index = [=](int full_index) {
-		int index_small = 0;
-		int stride_small = 1;
-		for (int d = 0; d < sizes_full.size(); ++d) {
-			int pos_full = full_index % sizes_full[d];
-			int pos_small = pos_full / downscale_factor;
-			index_small += stride_small * pos_small;
-			full_index /= sizes_full[d];
-			stride_small *= sizes_small[d];
-		}
-		return index_small;
-	};
-
-	std::vector<Eigen::Triplet<float>> AtA_triplets_small;
-	for (int k=0; k < AtA_full.outerSize(); ++k) {
-		for (SparseMatrix::InnerIterator it(AtA_full, k); it; ++it) {
-			AtA_triplets_small.emplace_back(as_small_index(it.row()), as_small_index(it.col()), it.value());
-		}
-	}
-
-	SparseMatrix AtA_small(num_unknowns_small, num_unknowns_small);
-	AtA_small.setFromTriplets(AtA_triplets_small.begin(), AtA_triplets_small.end());
-	AtA_small.makeCompressed();
-
-	VectorXr Atb_small = VectorXr::Zero(num_unknowns_small);
-	for (int full_i = 0; full_i < Atb_full.size(); ++full_i) {
-		Atb_small[as_small_index(full_i)] += Atb_full[full_i];
-	}
-
-	// ------------------------------------------------------------------------
-
-	LOG_F(1, "AtA_small nnz: %lu (%.3f%%)", AtA_small.nonZeros(),
-	      100.0f * AtA_small.nonZeros() / (AtA_small.rows() * AtA_small.cols()));
-
-	Eigen::SimplicialLLT<SparseMatrix> solver_small(AtA_small);
-
-	if (solver_small.info() != Eigen::Success) {
-		LOG_F(WARNING, "solver_small.compute failed");
-		return {};
-	}
-
-	VectorXr solution_small = solver_small.solve(Atb_small);
-
-	if (solver_small.info() != Eigen::Success) {
-		LOG_F(WARNING, "solver_small.solve failed");
-		return {};
-	}
-
-	VectorXr guess_full = VectorXr::Zero(Atb_full.size());
-	for (int full_i = 0; full_i < guess_full.size(); ++full_i) {
-		guess_full[full_i] = solution_small[as_small_index(full_i)];
-	}
-
-	return guess_full;
 }
 
 /// Break the lattice into tiles, each tile_size^D big.
@@ -345,32 +312,35 @@ VectorXr tile_solver(
 	return solution_full;
 }
 
-std::vector<float> solve_sparse_linear_approximate_lattice(
-	const std::vector<Triplet>& triplets,
-	const std::vector<float>&   rhs,
-	const std::vector<int>&     sizes,
-	const SolveOptions&         options)
+std::vector<float> solve_tiled_with_guess(
+	const LinearEquation&     eq,
+	const std::vector<float>& guess_vec,
+	const std::vector<int>&   sizes,
+	const SolveOptions&       options)
 {
-	LOG_SCOPE_F(1, "solve_sparse_linear_approximate_lattice");
+	LOG_SCOPE_F(1, "solve_tiled_with_guess");
 	int num_unknowns = 1;
 	for (auto size : sizes) { num_unknowns *= size; }
 
-	const SparseMatrix A = as_sparse_matrix(triplets, rhs.size(), num_unknowns);
-	const SparseMatrix AtA = make_square(A);
-	const VectorXr Atb = A.transpose() * as_eigen_vector(rhs);
-
-	LOG_F(1, "A nnz:   %lu (%.3f%%)", A.nonZeros(),
-	      100.0f * A.nonZeros() / (A.rows() * A.cols()));
-
-	LOG_F(1, "AtA nnz: %lu (%.3f%%)", AtA.nonZeros(),
-	      100.0f * AtA.nonZeros() / (AtA.rows() * AtA.cols()));
-	// ------------------------------------------------------------------------
-
-	VectorXr guess = downscale_solver(AtA, Atb, sizes, options.downscale_factor);
-
-	if (guess.size() == 0) {
+	if (guess_vec.size() != num_unknowns)
+	{
+		LOG_F(ERROR, "Incomplete guess.");
 		return {};
 	}
+
+	const SparseMatrix A = as_sparse_matrix(eq.triplets, eq.rhs.size(), num_unknowns);
+	const SparseMatrix AtA = make_square(A);
+	const VectorXr Atb = A.transpose() * as_eigen_vector(eq.rhs);
+
+	LOG_F(1, "A nnz:   %lu (%.3f%%)", A.nonZeros(),
+		  100.0f * A.nonZeros() / (A.rows() * A.cols()));
+
+	LOG_F(1, "AtA nnz: %lu (%.3f%%)", AtA.nonZeros(),
+		  100.0f * AtA.nonZeros() / (AtA.rows() * AtA.cols()));
+
+	// ------------------------------------------------------------------------
+
+	VectorXr guess = as_eigen_vector(guess_vec);
 
 	if (options.tile) {
 		guess = tile_solver(AtA, Atb, guess, sizes, options.tile_size);

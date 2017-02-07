@@ -9,59 +9,18 @@ namespace field_interpolation {
 
 const int TWO_TO_MAX_DIM = (1 << 4);
 
-std::ostream& operator<<(std::ostream& os, const LinearEquation& eq)
-{
-	const size_t num_rows = eq.rhs.size();
-	std::vector<std::vector<Triplet>> row_triplets(num_rows);
-
-	for (const auto& triplet : eq.triplets) {
-		row_triplets[triplet.row].push_back(triplet);
-	}
-
-	for (size_t row = 0; row < num_rows; ++row) {
-		os << eq.rhs[row] << " = ";
-		for (size_t triplet_idx = 0; triplet_idx < row_triplets[row].size(); ++triplet_idx) {
-			const auto& triplet = row_triplets[row][triplet_idx];
-			os << triplet.value << " * x" << triplet.col;
-			if (triplet_idx + 1 < row_triplets[row].size()) {
-				os  << "  +  ";
-			}
-		}
-		os << "\n";
-	}
-	return os;
-}
-
-void add_equation(
-	LinearEquation* eq, Weight weight, Rhs rhs, std::initializer_list<LinearEquationPair> pairs)
-{
-	if (weight.value == 0) { return; }
-
-	// bool all_zero = rhs == 0;
-	bool all_zero = true;
-	int row = eq->rhs.size();
-	for (const auto& pair : pairs) {
-		if (pair.value != 0) {
-			eq->triplets.emplace_back(row, pair.column, pair.value * weight.value);
-			all_zero = false;
-		}
-	}
-	if (!all_zero) {
-		eq->rhs.emplace_back(rhs.value * weight.value);
-	}
-}
-
 /// Computed coefficients for multi-dimensional linear interpolation of 2^D neighbors.
 /// Returns the number of indices to sample from.
-/// The indices are put in out_indices, the kernel (inteprolation weights) in out_kernel.
+/// The indices are put in out_indices, the kernel (interpolation weights) in out_kernel.
 int multilerp(
-	int                 out_indices[],
-	float               out_kernel[],
-	const LatticeField& field,
-	const float         in_pos[],
-	int                 extra_bound)
+	int                     out_indices[],
+	float                   out_kernel[],
+	const std::vector<int>& sizes,
+	const std::vector<int>& strides,
+	const float             in_pos[],
+	int                     extra_bound)
 {
-	const int num_dim = field.num_dim();
+	const int num_dim = sizes.size();
 	CHECK_F(1 <= num_dim && num_dim <= MAX_DIM);
 
 	int floored[MAX_DIM];
@@ -81,9 +40,9 @@ int multilerp(
 		for (int d = 0; d < num_dim; ++d) {
 			const int set = (i >> d) & 1;
 			int dim_coord = floored[d] + set;
-			index  += field.strides[d] * dim_coord;
+			index  += strides[d] * dim_coord;
 			weight *= (set ? t[d] : 1.0f - t[d]);
-			inside &= (0 <= dim_coord && dim_coord + extra_bound < field.sizes[d]);
+			inside &= (0 <= dim_coord && dim_coord + extra_bound < sizes[d]);
 		}
 		if (inside) {
 			out_indices[num_samples] = index;
@@ -103,16 +62,16 @@ bool add_value_constraint(
 {
 	if (constraint_weight == 0) { return false; }
 
-	int inteprolation_indices[TWO_TO_MAX_DIM];
+	int interpolation_indices[TWO_TO_MAX_DIM];
 	float interpolation_kernel[TWO_TO_MAX_DIM];
-	int num_samples = multilerp(inteprolation_indices, interpolation_kernel, *field, pos, 0);
+	int num_samples = multilerp(interpolation_indices, interpolation_kernel, field->sizes, field->strides, pos, 0);
 	if (num_samples == 0) { return false; }
 
 	int row = field->eq.rhs.size();
 	float weight_sum = 0;
 	for (int i = 0; i < num_samples; ++i) {
 		float sample_weight = interpolation_kernel[i] * constraint_weight;
-		field->eq.triplets.emplace_back(row, inteprolation_indices[i], sample_weight);
+		field->eq.triplets.emplace_back(row, interpolation_indices[i], sample_weight);
 		weight_sum += sample_weight;
 	}
 	field->eq.rhs.emplace_back(weight_sum * value);
@@ -199,7 +158,7 @@ bool add_gradient_constraint(
 			field->eq.rhs.emplace_back(constraint_weight * gradient[d]);
 		}
 		return true;
-	} else if (kernel == GradientKernel::kLinearInteprolation) {
+	} else if (kernel == GradientKernel::kLinearInterpolation) {
 		/*
 		We spread the contribution using bilinear interpolation.
 
@@ -227,9 +186,9 @@ bool add_gradient_constraint(
 			adjusted_pos[d] = pos[d] - 0.5f;
 		}
 
-		int inteprolation_indices[TWO_TO_MAX_DIM];
+		int interpolation_indices[TWO_TO_MAX_DIM];
 		float interpolation_kernel[TWO_TO_MAX_DIM];
-		int num_samples = multilerp(inteprolation_indices, interpolation_kernel, *field, adjusted_pos, 1);
+		int num_samples = multilerp(interpolation_indices, interpolation_kernel, field->sizes, field->strides, adjusted_pos, 1);
 		if (num_samples == 0) { return false; }
 
 		for (int d = 0; d < num_dim; ++d) {
@@ -240,8 +199,8 @@ bool add_gradient_constraint(
 				// d f(x, y) / dy = gradient[1]
 				// ...
 				const float sample_weight = interpolation_kernel[i] * constraint_weight;
-				field->eq.triplets.emplace_back(row, inteprolation_indices[i] + 0,                 -sample_weight);
-				field->eq.triplets.emplace_back(row, inteprolation_indices[i] + field->strides[d], +sample_weight);
+				field->eq.triplets.emplace_back(row, interpolation_indices[i] + 0,                 -sample_weight);
+				field->eq.triplets.emplace_back(row, interpolation_indices[i] + field->strides[d], +sample_weight);
 				weight_sum += sample_weight;
 			}
 			field->eq.rhs.emplace_back(weight_sum * gradient[d]);
@@ -329,11 +288,11 @@ void add_model_constraint(
 	}
 }
 
-void coordinate_from_index(const LatticeField& field, int coordinate[MAX_DIM], int index)
+void coordinate_from_index(const std::vector<int>& sizes, int coordinate[MAX_DIM], int index)
 {
-	for (int d = 0; d < field.num_dim(); ++d) {
-		coordinate[d] = index % field.sizes[d];
-		index /= field.sizes[d];
+	for (int d = 0; d < sizes.size(); ++d) {
+		coordinate[d] = index % sizes[d];
+		index /= sizes[d];
 	}
 }
 
@@ -347,7 +306,7 @@ void add_field_constraints(
 	}
 	for (int index = 0; index < num_unknowns; ++index) {
 		int coordinate[MAX_DIM];
-		coordinate_from_index(*field, coordinate, index);
+		coordinate_from_index(field->sizes, coordinate, index);
 		for (int d = 0; d < field->sizes.size(); ++d) {
 			add_model_constraint(field, weights, coordinate, index, d);
 		}
@@ -409,6 +368,63 @@ std::vector<float> generate_error_map(
 	}
 
 	return heatmap;
+}
+
+std::vector<float> upscale_field(
+    const float* small_field, const std::vector<int>& small_sizes, const std::vector<int>& large_sizes)
+{
+	VLOG_SCOPE_F(1, "upscale_field");
+	CHECK_EQ_F(small_sizes.size(), large_sizes.size());
+	int num_dim = small_sizes.size();
+
+	int small_unknowns = 1;
+	for (auto small_size : small_sizes) { small_unknowns *= small_size; }
+
+	int large_unknowns = 1;
+	for (auto large_size : large_sizes) { large_unknowns *= large_size; }
+
+	std::vector<int> small_strides;
+	{
+		int small_stride = 1;
+		for (int small_size : small_sizes) {
+			small_strides.push_back(small_stride);
+			small_stride *= small_size;
+		}
+	}
+
+	std::vector<float> large_field;
+	large_field.reserve(large_unknowns);
+
+	for (int large_index = 0; large_index < large_unknowns; ++large_index)
+	{
+		int large_coordinate[MAX_DIM];
+		coordinate_from_index(large_sizes, large_coordinate, large_index);
+
+		float small_pos[MAX_DIM];
+		for (int d = 0; d < num_dim; ++d) {
+			small_pos[d] = (float)large_coordinate[d] * (small_sizes[d] - 1.0f) / (large_sizes[d] - 1.0f);
+		}
+
+		int sample_indices_small[TWO_TO_MAX_DIM];
+		float sample_kernel[TWO_TO_MAX_DIM];
+
+		const int num_samples = multilerp(sample_indices_small, sample_kernel, small_sizes, small_strides, small_pos, 0);
+
+		float weight_sum = 0;
+		float field_sum = 0;
+		for (int i = 0; i < num_samples; ++i) {
+			weight_sum += sample_kernel[i];
+			field_sum += sample_kernel[i] * small_field[sample_indices_small[i]];
+		}
+
+		if (weight_sum == 0) {
+			large_field.push_back(0.0f);
+		} else {
+			large_field.push_back(field_sum / weight_sum);
+		}
+	}
+
+	return large_field;
 }
 
 } // namespace field_interpolation

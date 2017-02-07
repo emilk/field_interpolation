@@ -30,7 +30,7 @@ namespace fi = field_interpolation;
 
 VISITABLE_STRUCT(ImVec2, x, y);
 VISITABLE_STRUCT(fi::Weights, data_pos, data_gradient, model_0, model_1, model_2, model_3, model_4, gradient_smoothness);
-VISITABLE_STRUCT(fi::SolveOptions, downscale_factor, tile, tile_size, cg, error_tolerance);
+VISITABLE_STRUCT(fi::SolveOptions, tile, tile_size, cg, error_tolerance);
 
 using Vec2List = std::vector<ImVec2>;
 
@@ -73,6 +73,7 @@ struct Options
 	std::vector<Shape> shapes;
 	fi::Weights        weights;
 	bool               exact_solve = false;
+	int                downscale_factor = 3;
 	fi::SolveOptions   solve_options;
 
 	Options()
@@ -88,7 +89,7 @@ struct Options
 	}
 };
 
-VISITABLE_STRUCT(Options, noise, resolution, shapes, weights, exact_solve, solve_options);
+VISITABLE_STRUCT(Options, noise, resolution, shapes, weights, exact_solve, downscale_factor, solve_options);
 
 struct Result
 {
@@ -220,6 +221,20 @@ float area(const std::vector<Shape>& shapes)
 	return expected_area;
 }
 
+Vec2List on_lattice(const Vec2List& positions, float resolution)
+{
+	Vec2List lattice_positions;
+
+	for (const auto& pos : positions) {
+		ImVec2 on_lattice = pos;
+		on_lattice.x *= (resolution - 1.0f);
+		on_lattice.y *= (resolution - 1.0f);
+		lattice_positions.push_back(on_lattice);
+	}
+
+	return lattice_positions;
+}
+
 auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Options& options)
 {
 	LOG_SCOPE_F(1, "generate_sdf");
@@ -229,17 +244,38 @@ auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Opti
 	const int height = options.resolution;
 
 	static_assert(sizeof(ImVec2) == 2 * sizeof(float), "Pack");
-	const auto field = sdf_from_points(
-		{width, height}, options.weights, positions.size(), &positions[0].x, &normals[0].x, nullptr);
 
 	const size_t num_unknowns = width * height;
+
+	const Vec2List large_lattice_positions = on_lattice(positions, options.resolution);
+
+	const auto field = sdf_from_points(
+		{width, height}, options.weights, large_lattice_positions.size(), &large_lattice_positions[0].x, &normals[0].x, nullptr);
+
 	std::vector<float> sdf;
 	if (options.exact_solve) {
-		sdf = solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs);
+		sdf = solve_sparse_linear(field.eq, num_unknowns);
 	} else {
-		sdf = solve_sparse_linear_approximate_lattice(
-			field.eq.triplets, field.eq.rhs, {width, height}, options.solve_options);
+		const int resolution_small = (options.resolution + options.downscale_factor - 1) / options.downscale_factor;
+
+		const int num_unknowns_small = resolution_small * resolution_small;
+		const std::vector<int> sizes_small{resolution_small, resolution_small};
+
+		auto weights = options.weights;
+
+		const Vec2List small_lattice_positions = on_lattice(positions, resolution_small);
+
+		const auto field_small = sdf_from_points(
+			sizes_small, weights, small_lattice_positions.size(), &small_lattice_positions[0].x, &normals[0].x, nullptr);
+
+		const auto solution_small = solve_sparse_linear(field_small.eq, num_unknowns_small);
+
+		const auto guess =
+			fi::upscale_field(solution_small.data(), sizes_small, {width, height});
+
+		sdf = solve_tiled_with_guess(field.eq, guess, {width, height}, options.solve_options);
 	}
+
 	if (sdf.size() != num_unknowns) {
 		LOG_F(ERROR, "Failed to find a solution");
 		sdf.resize(num_unknowns, 0.0f);
@@ -291,16 +327,7 @@ Result generate(const Options& options)
 	}
 	perturb_points(&result.point_positions, &result.point_normals, options.noise);
 
-	Vec2List lattice_positions;
-
-	for (const auto& pos : result.point_positions) {
-		ImVec2 on_lattice = pos;
-		on_lattice.x *= (resolution - 1.0f);
-		on_lattice.y *= (resolution - 1.0f);
-		lattice_positions.push_back(on_lattice);
-	}
-
-	std::tie(result.field, result.sdf) = generate_sdf(lattice_positions, result.point_normals, options);
+	std::tie(result.field, result.sdf) = generate_sdf(result.point_positions, result.point_normals, options);
 	result.heatmap = generate_error_map(result.field.eq.triplets, result.sdf, result.field.eq.rhs);
 	result.heatmap_image = generate_heatmap(result.heatmap, 0, *max_element(result.heatmap.begin(), result.heatmap.end()));
 	CHECK_EQ_F(result.heatmap_image.size(), resolution * resolution);
@@ -360,7 +387,7 @@ bool show_weights(fi::Weights* weights)
 	ImGui::SameLine();
 	changed |= ImGuiPP::RadioButtonEnum("cell edges", &weights->gradient_kernel, fi::GradientKernel::kCellEdges);
 	ImGui::SameLine();
-	changed |= ImGuiPP::RadioButtonEnum("n-linear-interpolation", &weights->gradient_kernel, fi::GradientKernel::kLinearInteprolation);
+	changed |= ImGuiPP::RadioButtonEnum("n-linear-interpolation", &weights->gradient_kernel, fi::GradientKernel::kLinearInterpolation);
 
 	if (ImGui::Button("Reset weights")) {
 		*weights = {};
@@ -387,7 +414,6 @@ bool show_solve_options(fi::SolveOptions* options)
 		*options = {};
 		changed = true;
 	}
-	changed |= ImGui::SliderInt("downscale_factor", &options->downscale_factor, 2, 10);
 	changed |= ImGui::Checkbox("tile", &options->tile);
 	if (options->tile) {
 		changed |= ImGui::SliderInt("tile_size", &options->tile_size, 2, 128);
@@ -446,6 +472,7 @@ bool show_options(Options* options)
 
 	changed |= ImGui::Checkbox("Exact solve", &options->exact_solve);
 	if (!options->exact_solve) {
+		changed |= ImGui::SliderInt("downscale_factor", &options->downscale_factor, 2, 10);
 		changed |= show_solve_options(&options->solve_options);
 	}
 
@@ -646,7 +673,7 @@ void show_1d_field_window(Field1DInput* input)
 	add_field_constraints(&field, input->weights);
 
 	const size_t num_unknowns = input->resolution;
-	auto interpolated = solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs);
+	auto interpolated = solve_sparse_linear(field.eq, num_unknowns);
 	if (interpolated.size() != num_unknowns) {
 		LOG_F(ERROR, "Failed to find a solution");
 		interpolated.resize(num_unknowns, 0.0f);
@@ -737,7 +764,7 @@ void show_1d_denoiser_window()
 	}
 
 	const int num_unknowns = s_resolution;
-	std::vector<float> solution = solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs);
+	std::vector<float> solution = solve_sparse_linear(field.eq, num_unknowns);
 	if (solution.empty()) { solution.resize(num_unknowns, 0.0f); }
 
 	// ------------------------------------------
@@ -822,7 +849,7 @@ void show_2d_field_window()
 	}
 
 	const size_t num_unknowns = s_resolution * s_resolution;
-	auto interpolated = solve_sparse_linear(num_unknowns, field.eq.triplets, field.eq.rhs);
+	auto interpolated = solve_sparse_linear(field.eq, num_unknowns);
 	if (interpolated.size() != num_unknowns) {
 		LOG_F(ERROR, "Failed to find a solution");
 		interpolated.resize(num_unknowns, 0.0f);

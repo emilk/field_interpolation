@@ -48,7 +48,7 @@ enum class GradientKernel
 {
 	kNearestNeighbor,      ///< Apply to the closest two points along each dimension
 	kCellEdges,            ///< Apply to all edges in the cell
-	kLinearInteprolation,  ///< Linear interpolation of the two closest edges along each dimension
+	kLinearInterpolation,  ///< Linear interpolation of the two closest edges along each dimension
 };
 
 /// A note about picking good parameters:
@@ -71,7 +71,7 @@ struct Weights
 	float data_gradient = 1.00f; ///< How much we trust the point gradient/normal
 	// https://en.wikipedia.org/wiki/Smoothness#Order_of_continuity
 	float model_0       = 0.00f; ///< How much we believe the field to be zero (regularization). If this is large everything will be zero.
-	float model_1       = 0.10f; ///< How much we believe the field to be uniform. If this is large you will take the average of the data.
+	float model_1       = 0.00f; ///< How much we believe the field to be uniform. If this is large you will take the average of the data.
 	float model_2       = 0.50f; ///< How much we believe the field to be smooth. If this is large you will be fitting a line to the data.
 	float model_3       = 0.00f; ///< If this is large, you will be fitting a quadratic curve to you data.
 	float model_4       = 0.00f; ///< If this is large, you will be fitting a cubic curve to you data.
@@ -84,21 +84,6 @@ struct Weights
 	float gradient_smoothness = 0.0f;
 
 	GradientKernel gradient_kernel = GradientKernel::kCellEdges;
-};
-
-/// Sparse Ax=b where A is described by `triplets` and `rhs` is b.
-struct LinearEquation
-{
-	std::vector<Triplet> triplets;
-	std::vector<float>   rhs;
-};
-
-std::ostream& operator<<(std::ostream& os, const LinearEquation& eq);
-
-struct LinearEquationPair
-{
-	int   column;
-	float value;
 };
 
 struct LatticeField
@@ -119,13 +104,6 @@ struct LatticeField
 
 	int num_dim() const { return static_cast<int>(sizes.size()); }
 };
-
-struct Weight { float value; };
-struct Rhs    { float value; };
-
-/// Helper to add a row to the linear equation.
-void add_equation(
-	LinearEquation* eq, Weight weight, Rhs rhs, std::initializer_list<LinearEquationPair> pairs);
 
 /// Add equations describing the model: a smooth field on a lattice.
 void add_field_constraints(
@@ -163,9 +141,13 @@ LatticeField sdf_from_points(
 	const float*            point_weights); // Optional (may be null).
 
 /// Calculate (Ax - b)^2 and distribute onto the solution space for a heatmap of blame.
-std::vector<float> generate_error_map(
-	const std::vector<Triplet>& triplets,
-	const std::vector<float>&   solution,
-	const std::vector<float>&   rhs);
+std::vector<float> generate_error_map(const std::vector<Triplet>& triplets,
+    const std::vector<float>& solution, const std::vector<float>& rhs);
+
+/// Bilinear interpolation.
+/// In: product(small_sizes) floats.
+/// Out: product(large_sizes) floats.
+std::vector<float> upscale_field(
+    const float* field, const std::vector<int>& small_sizes, const std::vector<int>& large_sizes);
 
 } // namespace field_interpolation
