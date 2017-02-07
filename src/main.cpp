@@ -2,6 +2,10 @@
 #include <sstream>
 #include <vector>
 
+extern "C" {
+	#include <heman.h>
+}
+
 #include <SDL2/SDL.h>
 #include <stb/stb_image.h>
 
@@ -978,6 +982,294 @@ void show_sdf_fields(FieldGui* field_gui)
 	ImGui::End();
 }
 
+// ----------------------------------------------------------------------------
+
+heman_image* hut_read_image(const char* filename, int nbands)
+{
+	int width = 0, height = 0;
+	stbi_uc* bytes;
+	heman_image* retval;
+	bytes = stbi_load(filename, &width, &height, nullptr, nbands);
+	if (bytes == nullptr) { return nullptr; }
+	retval = heman_import_u8(width, height, nbands, bytes, 0, 1);
+	stbi_image_free(bytes);
+	return retval;
+}
+
+struct SdfInterpolator
+{
+	// Input:
+	int   _num_frames                 = 8;
+	float _data_weight                = 1;
+	float _xy_smoothness_weight       = 0.001;
+	float _temporal_smoothness_weight = 0.001;
+	float _c2_smoothness              = 0.001;
+
+	// Output:
+	int _width;
+	int _height;
+	std::vector<float> _solution;
+
+	// View:
+	int _frame = 12;
+
+	gl::Texture _sdf_texture{"sdf", gl::TexParams::clamped_nearest()};
+	gl::Texture _blob_texture{"blob", gl::TexParams::clamped_nearest()};
+
+	SdfInterpolator()
+	{
+		calc();
+	}
+
+	/// z = time/interpolation
+	int index(int x, int y, int z) const
+	{
+		return x + _width * (y + _height * z);
+	}
+
+	void calc()
+	{
+		LOG_SCOPE_F(INFO, "SdfInterpolator::calc");
+		heman_image* seed_a = hut_read_image("sdf_interpolation/a.png", 1);
+		CHECK_NOTNULL_F(seed_a, "Failed to load image.");
+		heman_image* sdf_a = heman_distance_create_sdf(seed_a);
+		heman_image* cpcf_a = heman_distance_create_cpcf(seed_a);
+		SCOPE_EXIT{ heman_image_destroy(sdf_a); };
+		SCOPE_EXIT{ heman_image_destroy(cpcf_a); };
+		heman_image_destroy(seed_a);
+
+		heman_image* seed_b = hut_read_image("sdf_interpolation/b.png", 1);
+		CHECK_NOTNULL_F(seed_b, "Failed to load image.");
+		heman_image* sdf_b = heman_distance_create_sdf(seed_b);
+		heman_image* cpcf_b = heman_distance_create_cpcf(seed_b);
+		SCOPE_EXIT{ heman_image_destroy(sdf_b); };
+		SCOPE_EXIT{ heman_image_destroy(cpcf_b); };
+		heman_image_destroy(seed_b);
+
+		int bands;
+		heman_image_info(sdf_a, &_width, &_height, &bands);
+		CHECK_EQ_F(bands, 1);
+
+		fi::LinearEquation eq;
+
+		for (int y : emilib::irange(0, _height)) {
+			for (int x : emilib::irange(0, _width)) {
+				add_equation(&eq, fi::Weight{_data_weight}, fi::Rhs{*heman_image_texel(sdf_a, x, y)}, {
+					{index(x, y, 0), 1.0f}
+				});
+				add_equation(&eq, fi::Weight{_data_weight}, fi::Rhs{*heman_image_texel(sdf_b, x, y)}, {
+					{index(x, y, _num_frames - 1), 1.0f}
+				});
+			}
+		}
+
+		for (int z : emilib::irange(0, _num_frames)) {
+			bool is_anchor_frame = (z == 0 || z + 1 == _num_frames);
+			for (int y : emilib::irange(0, _height)) {
+				for (int x : emilib::irange(0, _width)) {
+					add_equation(&eq, fi::Weight{1e-6f}, fi::Rhs{0.0f}, {{index(x,y,z), 1.0f}});
+					if (!is_anchor_frame) {
+						if (x + 2 < _width) {
+							add_equation(&eq, fi::Weight{_xy_smoothness_weight}, fi::Rhs{0.0f}, {
+								{index(x + 0, y, z), +1.0f},
+								{index(x + 1, y, z), -2.0f},
+								{index(x + 2, y, z), +1.0f},
+							});
+						}
+
+						if (y + 2 < _height) {
+							add_equation(&eq, fi::Weight{_xy_smoothness_weight}, fi::Rhs{0.0f}, {
+								{index(x, y + 0, z), +1.0f},
+								{index(x, y + 1, z), -2.0f},
+								{index(x, y + 2, z), +1.0f},
+							});
+						}
+					}
+
+					if (z + 2 < _num_frames) {
+						add_equation(&eq, fi::Weight{_temporal_smoothness_weight}, fi::Rhs{0.0f}, {
+							{index(x, y, z + 0), +1.0f},
+							{index(x, y, z + 1), -2.0f},
+							{index(x, y, z + 2), +1.0f},
+						});
+					}
+
+					// We want to detect and propagate "creases"
+					// They can stay put or slide around, so:
+					if (z + 1 < _num_frames) {
+						if (x + 4 < _width) {
+							add_equation(&eq, fi::Weight{_temporal_smoothness_weight}, fi::Rhs{0.0f}, {
+								{index(x + 1, y, z), +1.0f * -1.0f},
+								{index(x + 2, y, z), -2.0f * -1.0f},
+								{index(x + 3, y, z), +1.0f * -1.0f},
+
+								{index(x + 0, y, z + 1), +1.0f},
+								{index(x + 1, y, z + 1), -2.0f},
+								{index(x + 2, y, z + 1), +1.0f},
+								{index(x + 1, y, z + 1), +1.0f},
+								{index(x + 2, y, z + 1), -2.0f},
+								{index(x + 3, y, z + 1), +1.0f},
+								{index(x + 2, y, z + 1), +1.0f},
+								{index(x + 3, y, z + 1), -2.0f},
+								{index(x + 4, y, z + 1), +1.0f},
+							});
+						}
+						if (y + 4 < _height) {
+							add_equation(&eq, fi::Weight{_temporal_smoothness_weight}, fi::Rhs{0.0f}, {
+								{index(x, y + 1, z), +1.0f * -1.0f},
+								{index(x, y + 2, z), -2.0f * -1.0f},
+								{index(x, y + 3, z), +1.0f * -1.0f},
+
+								{index(x, y + 0, z + 1), +1.0f},
+								{index(x, y + 1, z + 1), -2.0f},
+								{index(x, y + 2, z + 1), +1.0f},
+								{index(x, y + 1, z + 1), +1.0f},
+								{index(x, y + 2, z + 1), -2.0f},
+								{index(x, y + 3, z + 1), +1.0f},
+								{index(x, y + 2, z + 1), +1.0f},
+								{index(x, y + 3, z + 1), -2.0f},
+								{index(x, y + 4, z + 1), +1.0f},
+							});
+						}
+					}
+
+					// if (z + 1 < _num_frames) {
+					// 	if (x + 3 < _width) {
+					// 		add_equation(&eq, fi::Weight{_c2_smoothness}, fi::Rhs{0.0f}, {
+					// 			{index(x + 0, y, z + 0), +1.0f},
+					// 			{index(x + 1, y, z + 0), -3.0f},
+					// 			{index(x + 2, y, z + 0), +3.0f},
+					// 			{index(x + 3, y, z + 0), -1.0f},
+
+					// 			{index(x + 0, y, z + 1), +1.0f * -1.0f},
+					// 			{index(x + 1, y, z + 1), -3.0f * -1.0f},
+					// 			{index(x + 2, y, z + 1), +3.0f * -1.0f},
+					// 			{index(x + 3, y, z + 1), -1.0f * -1.0f},
+					// 		});
+					// 	}
+					// 	if (y + 3 < _height) {
+					// 		add_equation(&eq, fi::Weight{_c2_smoothness}, fi::Rhs{0.0f}, {
+					// 			{index(x, y + 0, z + 0), +1.0f},
+					// 			{index(x, y + 1, z + 0), -3.0f},
+					// 			{index(x, y + 2, z + 0), +3.0f},
+					// 			{index(x, y + 3, z + 0), -1.0f},
+
+					// 			{index(x, y + 0, z + 1), +1.0f * -1.0f},
+					// 			{index(x, y + 1, z + 1), -3.0f * -1.0f},
+					// 			{index(x, y + 2, z + 1), +3.0f * -1.0f},
+					// 			{index(x, y + 3, z + 1), -1.0f * -1.0f},
+					// 		});
+					// 	}
+					// }
+
+					// if (z + 1 < _num_frames) {
+					// 	if (x + 4 < _width) {
+					// 		add_equation(&eq, fi::Weight{_c2_smoothness}, fi::Rhs{0.0f}, {
+					// 			{index(x + 0, y, z + 0), +1.0f},
+					// 			{index(x + 1, y, z + 0), -4.0f},
+					// 			{index(x + 2, y, z + 0), +6.0f},
+					// 			{index(x + 3, y, z + 0), -4.0f},
+					// 			{index(x + 4, y, z + 0), +1.0f},
+
+					// 			{index(x + 0, y, z + 1), +1.0f * -1.0f},
+					// 			{index(x + 1, y, z + 1), -4.0f * -1.0f},
+					// 			{index(x + 2, y, z + 1), +6.0f * -1.0f},
+					// 			{index(x + 3, y, z + 1), -4.0f * -1.0f},
+					// 			{index(x + 4, y, z + 1), +1.0f * -1.0f},
+					// 		});
+					// 	}
+					// 	if (y + 4 < _height) {
+					// 		add_equation(&eq, fi::Weight{_c2_smoothness}, fi::Rhs{0.0f}, {
+					// 			{index(x, y + 0, z + 0), +1.0f},
+					// 			{index(x, y + 1, z + 0), -4.0f},
+					// 			{index(x, y + 2, z + 0), +6.0f},
+					// 			{index(x, y + 3, z + 0), -4.0f},
+					// 			{index(x, y + 4, z + 0), +1.0f},
+
+					// 			{index(x, y + 0, z + 1), +1.0f * -1.0f},
+					// 			{index(x, y + 1, z + 1), -4.0f * -1.0f},
+					// 			{index(x, y + 2, z + 1), +6.0f * -1.0f},
+					// 			{index(x, y + 3, z + 1), -4.0f * -1.0f},
+					// 			{index(x, y + 4, z + 1), +1.0f * -1.0f},
+					// 		});
+					// 	}
+					// }
+				}
+			}
+		}
+
+		const int num_unknowns = _width * _height * _num_frames;
+		LOG_SCOPE_F(INFO, "solve_sparse_linear %dx%dx%d = %d unknowns, %lu equations",
+			_width, _height, _num_frames, num_unknowns, eq.rhs.size());
+		_solution = solve_sparse_linear(num_unknowns, eq.triplets, eq.rhs);
+		if (_solution.size() != num_unknowns) {
+			_solution.resize(num_unknowns, 0.0f);
+		}
+	}
+
+	void show_input()
+	{
+		bool changed = false;
+		changed |= ImGui::SliderInt("Num frames", &_num_frames, 3, 128);
+		changed |= ImGui::SliderFloat("_data_weight", &_data_weight, 0, 1000, "%.3f", 4);
+		changed |= ImGui::SliderFloat("_xy_smoothness_weight", &_xy_smoothness_weight, 0, 1000, "%.3f", 4);
+		changed |= ImGui::SliderFloat("_temporal_smoothness_weight", &_temporal_smoothness_weight, 0, 1000, "%.3f", 4);
+		changed |= ImGui::SliderFloat("_c2_smoothness", &_c2_smoothness, 0, 1000, "%.3f", 4);
+		if (changed) {
+			calc();
+		}
+	}
+
+	void show()
+	{
+		show_input();
+		_frame = math::clamp(_frame, 0, _num_frames - 1);
+		ImGui::SliderInt("Frame", &_frame, 0, _num_frames - 1);
+
+		std::vector<RGBA> sdf_image;
+		std::vector<RGBA> blob_image;
+
+		float max_abs_dist = 1e-6f;
+		for (int y : emilib::irange(0, _height)) {
+			for (int x : emilib::irange(0, _width)) {
+				float dist = _solution[index(x, y, _frame)];
+				max_abs_dist = std::max(max_abs_dist, std::abs(dist));
+			}
+		}
+
+		for (int y : emilib::irange(0, _height)) {
+			for (int x : emilib::irange(0, _width)) {
+				float dist = _solution[index(x, y, _frame)];
+				const uint8_t dist_u8 = std::min<float>(255, 255 * std::abs(dist) / max_abs_dist);
+				const uint8_t inv_dist_u8 = 255 - dist_u8;;
+				if (dist < 0) {
+					sdf_image.emplace_back(RGBA{inv_dist_u8, inv_dist_u8, 255, 255});
+				} else {
+					sdf_image.emplace_back(RGBA{255, inv_dist_u8, inv_dist_u8, 255});
+				}
+
+				float insideness = 1 - std::max(0.0, std::min(1.0, (127 * dist + 0.5) * 2));
+				const uint8_t color = 255 * insideness;
+				blob_image.emplace_back(RGBA{color, color, color, 255});
+			}
+		}
+
+		ImGui::Text("max_abs_dist: %f", max_abs_dist);
+
+		const auto image_size = gl::Size{static_cast<unsigned>(_width), static_cast<unsigned>(_height)};
+		_sdf_texture.set_data(sdf_image.data(), image_size, gl::ImageFormat::RGBA32);
+		_blob_texture.set_data(blob_image.data(), image_size, gl::ImageFormat::RGBA32);
+
+		ImVec2 canvas_size(320, 230);
+		ImGui::Image(reinterpret_cast<ImTextureID>(_sdf_texture.id()), canvas_size);
+		ImGui::SameLine();
+		ImGui::Image(reinterpret_cast<ImTextureID>(_blob_texture.id()), canvas_size);
+	}
+
+};
+
+// ----------------------------------------------------------------------------
+
 int main(int argc, char* argv[])
 {
 	loguru::g_colorlogtostderr = false;
@@ -992,6 +1284,8 @@ int main(int argc, char* argv[])
 
 	FieldGui field_gui;
 	Field1DInput field_1d_input = load_1d_field();
+
+	SdfInterpolator sdf_interpolation;
 
 	bool quit = false;
 	while (!quit) {
@@ -1019,6 +1313,11 @@ int main(int argc, char* argv[])
 
 		if (ImGui::Begin("2D field interpolation")) {
 			show_2d_field_window();
+		}
+		ImGui::End();
+
+		if (ImGui::Begin("SDF interpolation")) {
+			sdf_interpolation.show();
 		}
 		ImGui::End();
 
