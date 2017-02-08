@@ -69,12 +69,14 @@ VISITABLE_STRUCT(NoiseOptions, seed, pos_stddev, normal_stddev, outliers);
 struct Options
 {
 	NoiseOptions       noise;
-	size_t             resolution  = 24;
+	size_t             resolution           = 24;
 	std::vector<Shape> shapes;
 	fi::Weights        weights;
-	bool               exact_solve = true;
-	int                downscale_factor = 3;
-	fi::SolveOptions   solve_options;
+	bool               exact_solve          = true;
+	int                downscale_factor     =  3;
+	bool               compansate_downscale = true;
+	bool               cg                   = true;
+	float              error_tolerance      =  1e-3f;
 
 	Options()
 	{
@@ -89,7 +91,7 @@ struct Options
 	}
 };
 
-VISITABLE_STRUCT(Options, noise, resolution, shapes, weights, exact_solve, downscale_factor, solve_options);
+VISITABLE_STRUCT(Options, noise, resolution, shapes, weights, exact_solve, downscale_factor, compansate_downscale, cg, error_tolerance);
 
 struct Result
 {
@@ -120,6 +122,7 @@ std::vector<RGBA> generate_heatmap(const std::vector<float>& data, float min, fl
 			colors.emplace_back(RGBA{0,0,0,255});
 		} else {
 			int colormap_x = math::remap_clamp(value, min, max, 0, colormap_width - 1);
+			CHECK_F(0 <= colormap_x && colormap_x < colormap_width);
 			colors.emplace_back(colormap[colormap_x]);
 		}
 	}
@@ -256,24 +259,35 @@ auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Opti
 	if (options.exact_solve) {
 		sdf = solve_sparse_linear(field.eq, num_unknowns);
 	} else {
-		const int resolution_small = (options.resolution + options.downscale_factor - 1) / options.downscale_factor;
+		if (2 <= options.downscale_factor) {
+			const int resolution_small = (options.resolution + options.downscale_factor - 1) / options.downscale_factor;
 
-		const int num_unknowns_small = resolution_small * resolution_small;
-		const std::vector<int> sizes_small{resolution_small, resolution_small};
+			const int num_unknowns_small = resolution_small * resolution_small;
+			const std::vector<int> sizes_small{resolution_small, resolution_small};
 
-		auto weights = options.weights;
+			auto weights = options.weights;
 
-		const Vec2List small_lattice_positions = on_lattice(positions, resolution_small);
+			const Vec2List small_lattice_positions = on_lattice(positions, resolution_small);
 
-		const auto field_small = sdf_from_points(
-			sizes_small, weights, small_lattice_positions.size(), &small_lattice_positions[0].x, &normals[0].x, nullptr);
+			const auto field_small = sdf_from_points(
+				sizes_small, weights, small_lattice_positions.size(), &small_lattice_positions[0].x, &normals[0].x, nullptr);
 
-		const auto solution_small = solve_sparse_linear(field_small.eq, num_unknowns_small);
+			const auto solution_small = solve_sparse_linear(field_small.eq, num_unknowns_small);
 
-		const auto guess =
-			fi::upscale_field(solution_small.data(), sizes_small, {width, height});
+			sdf = fi::upscale_field(solution_small.data(), sizes_small, {width, height});
 
-		sdf = solve_tiled_with_guess(field.eq, guess, {width, height}, options.solve_options);
+			if (options.compansate_downscale) {
+				for (auto& value : sdf) {
+					value *= options.downscale_factor;
+				}
+			}
+		} else {
+			sdf = std::vector<float>(num_unknowns, 0.0f);
+		}
+
+		if (options.cg) {
+			sdf = solve_sparse_linear_with_guess(field.eq, sdf, options.error_tolerance);
+		}
 	}
 
 	if (sdf.size() != num_unknowns) {
@@ -421,24 +435,6 @@ bool show_weights(fi::Weights* weights)
 	return changed;
 }
 
-bool show_solve_options(fi::SolveOptions* options)
-{
-	bool changed = false;
-	if (ImGui::Button("Reset solve options")) {
-		*options = {};
-		changed = true;
-	}
-	changed |= ImGui::Checkbox("tile", &options->tile);
-	if (options->tile) {
-		changed |= ImGui::SliderInt("tile_size", &options->tile_size, 2, 128);
-	}
-	changed |= ImGui::Checkbox("cg", &options->cg);
-	if (options->cg) {
-		changed |= ImGui::SliderFloat("error_tolerance", &options->error_tolerance, 1e-6f, 1, "%.6f", 4);
-	}
-	return changed;
-}
-
 bool show_noise_options(NoiseOptions* options)
 {
 	bool changed = false;
@@ -486,8 +482,14 @@ bool show_options(Options* options)
 
 	changed |= ImGui::Checkbox("Exact solve", &options->exact_solve);
 	if (!options->exact_solve) {
-		changed |= ImGui::SliderInt("downscale_factor", &options->downscale_factor, 2, 10);
-		changed |= show_solve_options(&options->solve_options);
+		changed |= ImGui::SliderInt("downscale_factor", &options->downscale_factor, 1, 10);
+		if (2 <= options->downscale_factor) {
+			changed |= ImGui::Checkbox("compansate_downscale", &options->compansate_downscale);
+		}
+		changed |= ImGui::Checkbox("cg", &options->cg);
+		if (options->cg) {
+			changed |= ImGui::SliderFloat("error_tolerance", &options->error_tolerance, 1e-6f, 1, "%.6f", 4);
+		}
 	}
 
 	return changed;

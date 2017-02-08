@@ -339,6 +339,36 @@ void add_field_constraints(
 	}
 }
 
+LatticeField add_points(
+	LatticeField*  field,
+	float          value_weight,
+	ValueKernel    value_kernel,
+	float          gradient_weight,
+	GradientKernel gradient_kernel,
+	const int      num_points,
+	const float    positions[],    // Interleaved coordinates, e.g. xyxyxy...
+	const float*   normals,        // Optional (may be null).
+	const float*   point_weights)
+{
+	const int num_dim = field->num_dim();
+
+	for (int i = 0; i < num_points; ++i) {
+		float weight = point_weights ? point_weights[i] : 1.0f;
+		const float* pos = positions + i * num_dim;
+		const float* gradient = normals + i * num_dim;
+		if (value_kernel == ValueKernel::kNearestNeighbor) {
+			CHECK_NOTNULL_F(normals);
+			add_value_constraint_nearest_neighbor(field, pos, gradient, 0.0f, weight * value_weight);
+		} else {
+			add_value_constraint(field, pos, 0.0f, weight * value_weight);
+		}
+
+		if (normals) {
+			add_gradient_constraint(field, pos, gradient, weight * gradient_weight, gradient_kernel);
+		}
+	}
+}
+
 LatticeField sdf_from_points(
 	const std::vector<int>& sizes,
 	const Weights&          weights,
@@ -350,26 +380,20 @@ LatticeField sdf_from_points(
 	LOG_SCOPE_F(1, "sdf_from_points");
 	CHECK_NOTNULL_F(positions);
 
-	int num_dim = sizes.size();
 	LatticeField field{sizes};
 
 	add_field_constraints(&field, weights);
 
-	for (int i = 0; i < num_points; ++i) {
-		float weight = point_weights ? point_weights[i] : 1.0f;
-		const float* pos = positions + i * num_dim;
-		const float* gradient = normals + i * num_dim;
-		if (weights.value_kernel == ValueKernel::kNearestNeighbor) {
-			CHECK_NOTNULL_F(normals);
-			add_value_constraint_nearest_neighbor(&field, pos, gradient, 0.0f, weight * weights.data_pos);
-		} else {
-			add_value_constraint(&field, pos, 0.0f, weight * weights.data_pos);
-		}
-
-		if (normals) {
-			add_gradient_constraint(&field, pos, gradient, weight * weights.data_gradient, weights.gradient_kernel);
-		}
-	}
+	add_points(
+		&field,
+		weights.data_pos,
+		weights.value_kernel,
+		weights.data_gradient,
+		weights.gradient_kernel,
+		num_points,
+		positions,
+		normals,
+		point_weights);
 
 	return field;
 }
@@ -404,9 +428,8 @@ std::vector<float> generate_error_map(
 }
 
 std::vector<float> upscale_field(
-    const float* small_field, const std::vector<int>& small_sizes, const std::vector<int>& large_sizes)
+	const float* small_field, const std::vector<int>& small_sizes, const std::vector<int>& large_sizes)
 {
-	VLOG_SCOPE_F(1, "upscale_field");
 	CHECK_EQ_F(small_sizes.size(), large_sizes.size());
 	int num_dim = small_sizes.size();
 

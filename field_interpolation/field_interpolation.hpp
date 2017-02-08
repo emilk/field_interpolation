@@ -149,6 +149,18 @@ bool add_gradient_constraint(
 	float          weight,
 	GradientKernel kernel);
 
+/// Helper for calling add_value_constraint* and add_gradient_constraint repeatedly.
+LatticeField add_points(
+	LatticeField*  field,
+	float          value_weight,
+	ValueKernel    value_kernel,
+	float          gradient_weight,
+	GradientKernel gradient_kernel,
+	const int      num_points,
+	const float    positions[],    // Interleaved coordinates, e.g. xyxyxy...
+	const float*   normals,        // Optional (may be null).
+	const float*   point_weights); // Optional (may be null).
+
 /// Helper function for generating a signed distance field:
 /// The resulting distances may be scaled arbitrarily, and only accurate near field=0.
 /// Still, it will be useful for finding the field=0 surface using e.g. marching cubes.
