@@ -121,6 +121,47 @@ Solving a sparse linear least squares problem is a well-researched problem, whic
 
 There are probably plenty of improvement that can be done to this.
 
+# Speeding it up
+There are several strategies to speeding up the solving a big system, all which can be combined. What they have in common is that they trade precision for speed. what to try first depends on what is the problem.
+
+## My resolution is huge
+Try solving the system at a lower resolution, then scale it up (you can use the `upscale_field` helper function). Remember to multiply the field with the factor you scale it up with.
+
+Now you have an approximate solution - use it as a starting guess for solving the full system using an iterative solver (you can use `solve_sparse_linear_with_guess` for this).
+
+## I have a lot of data points, far more than unknowns
+Try using the nearest-neighborhood `ValueKernel` and `GradientKernel` to make your system more sparse.
+
+You can also try...
+
+### Reducing the data points
+If you have a lot of data points the solver can be slow. For an approximate solution you can use only every `N` points (e.g. every third). To compensate, multiply the weight with `√N`. Why?
+
+Consider the case on `N` equations with equal weight `W`. Since we are minimizing the square of the error, they contribute to the energy function as `E=N·W²`.
+So if you want to replace all these equations with just one equation, it should have the weight `√N·W`, so that `E = (√N·W)² = N·W²`.
+
+If your data have individual weights `Wᵢ` in the range `[0,1]` you can stochastically sample them by taking the likelihood you keep a point be `Wᵢ²`. That is, replace this:
+
+```
+for (const auto& point : points) {
+	add_value_constraint(&field, point.pos, point.value, point.weight * global_data_weight);
+}
+```
+
+with this:
+
+```
+for (const auto& point : points) {
+	if (random_in_range(0,1) < point.weight * point.weight) {
+		add_value_constraint(&field, point.pos, point.value, global_data_weight);
+	}
+}
+```
+
+To understand this, consider `N` points with (equal) individual weights `W`, and `global_data_weight = G`. In the first example, the energy would be `E = N·(W·G)² = N·W²·G²`.
+Now using the sampling method above we would expect to sample `N·W²` of the points, keeping the total energy as `E = N·W²·G²`.
+
+
 # Todo
 ## Algo
 * Sparse lattices
