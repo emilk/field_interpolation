@@ -103,6 +103,7 @@ bool add_value_constraint_nearest_neighbor(
 	add_equation(&field->eq, Weight{weight}, {value - dist_along_gradient}, {
 		{nearest_index, 1.0f}
 	});
+	return true;
 }
 
 /// Return -1 on out-of-bounds
@@ -339,7 +340,7 @@ void add_field_constraints(
 	}
 }
 
-LatticeField add_points(
+void add_points(
 	LatticeField*  field,
 	float          value_weight,
 	ValueKernel    value_kernel,

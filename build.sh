@@ -8,19 +8,23 @@ fi
 
 mkdir -p build
 
+echo "Checking version..."
 CXX="ccache g++"
 CPPFLAGS="--std=c++14 -Wall -Wpedantic -g -DNDEBUG"
 CPPFLAGS="$CPPFLAGS -Werror"
 CPPFLAGS="$CPPFLAGS -Wno-sign-compare"
 
-# Check if clang:
-$CXX --version 2>/dev/null | grep clang > /dev/null
-if [ $? ]; then
+# Check if clang:ret=0
+ret=0
+$CXX --version 2>/dev/null | grep clang > /dev/null || ret=$?
+if [ $ret == 0 ]; then
+	echo "Clang detect."
 	# Clang:
 	CPPFLAGS="$CPPFLAGS -Wno-gnu-zero-variadic-macro-arguments" # Loguru
 	CPPFLAGS="$CPPFLAGS -Wno-format-pedantic" # Imgui
 	CPPFLAGS="$CPPFLAGS -Wno-#warnings" # emilib
 else
+	echo "GCC detect."
 	# GCC:
 	CPPFLAGS="$CPPFLAGS -Wno-maybe-uninitialized" # stb
 fi

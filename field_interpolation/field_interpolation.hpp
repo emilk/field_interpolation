@@ -150,7 +150,7 @@ bool add_gradient_constraint(
 	GradientKernel kernel);
 
 /// Helper for calling add_value_constraint* and add_gradient_constraint repeatedly.
-LatticeField add_points(
+void add_points(
 	LatticeField*  field,
 	float          value_weight,
 	ValueKernel    value_kernel,
