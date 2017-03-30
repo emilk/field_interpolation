@@ -8,7 +8,6 @@ fi
 
 mkdir -p build
 
-echo "Checking version..."
 CXX="ccache g++"
 CPPFLAGS="--std=c++14 -Wall -Wpedantic -g -DNDEBUG"
 CPPFLAGS="$CPPFLAGS -Werror"
@@ -18,29 +17,27 @@ CPPFLAGS="$CPPFLAGS -Wno-sign-compare"
 ret=0
 $CXX --version 2>/dev/null | grep clang > /dev/null || ret=$?
 if [ $ret == 0 ]; then
-	echo "Clang detect."
 	# Clang:
 	CPPFLAGS="$CPPFLAGS -Wno-gnu-zero-variadic-macro-arguments" # Loguru
-	CPPFLAGS="$CPPFLAGS -Wno-format-pedantic" # Imgui
 	CPPFLAGS="$CPPFLAGS -Wno-#warnings" # emilib
 else
-	echo "GCC detect."
 	# GCC:
 	CPPFLAGS="$CPPFLAGS -Wno-maybe-uninitialized" # stb
 fi
 
 CPPFLAGS="$CPPFLAGS -O2"
-COMPILE_FLAGS="$CPPFLAGS -I . -I third_party -I third_party/emilib -I third_party/visit_struct/include"
+COMPILE_FLAGS="$CPPFLAGS -I . -isystem third_party -isystem third_party/emilib -isystem third_party/visit_struct/include"
 LDLIBS="-lstdc++ -lpthread -ldl"
 LDLIBS="$LDLIBS -lSDL2 -lGLEW"
 # LDLIBS="$LDLIBS -ljemalloc"
 
 # Platform specific flags:
 if [ "$(uname)" == "Darwin" ]; then
-	COMPILE_FLAGS="$COMPILE_FLAGS -I /opt/local/include/eigen3"
+	# COMPILE_FLAGS="$COMPILE_FLAGS -isystem /opt/local/include/eigen3" # port
+	COMPILE_FLAGS="$COMPILE_FLAGS -isystem /usr/local/Cellar/eigen/3.3.3/include/eigen3" # brew
 	LDLIBS="$LDLIBS -framework OpenGL"
 else
-	COMPILE_FLAGS="$COMPILE_FLAGS -I /usr/include/eigen3"
+	COMPILE_FLAGS="$COMPILE_FLAGS -isystem /usr/include/eigen3"
 	LDLIBS="$LDLIBS -lGL -lkqueue"
 fi
 
