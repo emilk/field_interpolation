@@ -146,6 +146,7 @@ std::vector<float> solve_sparse_linear(const LinearEquation& eq, int num_columns
 std::vector<float> solve_sparse_linear_with_guess(
 	const LinearEquation&     eq,
 	const std::vector<float>& guess,
+	int                       max_iterations,
 	float                     error_tolerance)
 {
 	LOG_SCOPE_F(1, "solve_sparse_linear_with_guess");
@@ -156,17 +157,16 @@ std::vector<float> solve_sparse_linear_with_guess(
 
 	LOG_SCOPE_F(1, "solveWithGuess");
 	Eigen::BiCGSTAB<SparseMatrix> solver(AtA);
-	// Eigen::ConjugateGradient<SparseMatrix> solver(AtA);
-	solver.setTolerance(error_tolerance);
+	if (0 < max_iterations) {
+		solver.setMaxIterations(max_iterations);
+	}
+	if (0 < error_tolerance) {
+		solver.setTolerance(error_tolerance);
+	}
 	const VectorXr solution = solver.solveWithGuess(Atb, as_eigen_vector(guess));
 
 	LOG_F(1, "CG iterations: %lu", solver.iterations());
 	LOG_F(1, "CG error:      %f",  solver.error());
-
-	if (solver.info() != Eigen::Success) {
-		LOG_F(WARNING, "solver.solveWithGuess failed");
-		return {};
-	}
 
 	return as_std_vector(solution);
 }
@@ -273,6 +273,11 @@ VectorXr tile_solver_square(
 
 	for (int tile_index = 0; tile_index < num_tiles_total; ++tile_index) {
 		const auto& tile = tiles[tile_index];
+		if (tile.triplets.size() == unknowns_per_tile) {
+			// This tile just contains the regularization factors. Skip.
+			continue;
+		}
+
 		SparseMatrix A_tile(unknowns_per_tile, unknowns_per_tile);
 		A_tile.setFromTriplets(tile.triplets.begin(), tile.triplets.end());
 		A_tile.makeCompressed();
@@ -325,8 +330,7 @@ std::vector<float> solve_tiled_with_guess(
 	int num_unknowns = 1;
 	for (auto size : sizes) { num_unknowns *= size; }
 
-	if (guess_vec.size() != num_unknowns)
-	{
+	if (guess_vec.size() != num_unknowns) {
 		LOG_F(ERROR, "Incomplete guess.");
 		return {};
 	}
@@ -351,26 +355,22 @@ std::vector<float> solve_tiled_with_guess(
 		guess = tile_solver_square(AtA, Atb, guess, sizes, options.tile_size);
 	}
 
-	if (!options.cg) {
-		return as_std_vector(guess);
+	if (options.cg) {
+		LOG_SCOPE_F(1, "solveWithGuess");
+		Eigen::BiCGSTAB<SparseMatrix> solver(AtA);
+		if (0 < options.max_iterations) {
+			solver.setMaxIterations(options.max_iterations);
+		}
+		if (0 < options.error_tolerance) {
+			solver.setTolerance(options.error_tolerance);
+		}
+		guess = solver.solveWithGuess(Atb, guess);
+
+		LOG_F(1, "CG iterations: %lu", solver.iterations());
+		LOG_F(1, "CG error:      %f",  solver.error());
 	}
 
-	LOG_SCOPE_F(1, "solveWithGuess");
-	Eigen::BiCGSTAB<SparseMatrix> solver(AtA);
-	// Eigen::ConjugateGradient<SparseMatrix> solver(AtA);
-
-	solver.setTolerance(options.error_tolerance);
-	const VectorXr solution = solver.solveWithGuess(Atb, guess);
-
-	LOG_F(1, "CG iterations: %lu", solver.iterations());
-	LOG_F(1, "CG error:      %f",  solver.error());
-
-	if (solver.info() != Eigen::Success) {
-		LOG_F(WARNING, "solver.solveWithGuess failed");
-		return as_std_vector(guess);
-	}
-
-	return as_std_vector(solution);
+	return as_std_vector(guess);
 }
 
 } // namespace field_interpolation

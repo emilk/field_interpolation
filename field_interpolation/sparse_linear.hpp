@@ -43,19 +43,21 @@ void add_equation(
 /// Duplicate elements in triplets will be summed.
 std::vector<float> solve_sparse_linear(const LinearEquation& eq, int num_columns);
 
-/// Least square solving for x in Ax = rhs.
+/// Least square solving for x in Ax = rhs using an iterative Conjugate Gradient solver.
 /// `guess` is a starting guess for x.
 std::vector<float> solve_sparse_linear_with_guess(
 	const LinearEquation&     eq,
 	const std::vector<float>& guess,
-	float                     error_tolerance);
+	int                       max_iterations,   ///< Set to zero for default (problem size).
+	float                     error_tolerance); ///< Set to zero for default (float epsilon).
 
 struct SolveOptions
 {
-	bool  tile             = true;
-	int   tile_size        = 16;
-	bool  cg               = true;
-	float error_tolerance  =  1e-3f;
+	bool  tile             = true;    ///< Break up problem into tiles and solve each tile exactly?
+	int   tile_size        = 16;      ///< Side of each tile (tile_size^D unknowns).
+	bool  cg               = true;    ///< Follow tile phase with a CG phase?
+	int   max_iterations   = 0;       ///< Set to zero for default (problem size).
+	float error_tolerance  =  1e-3f;  ///< Set to zero for default (float epsilon).
 };
 
 /// Approximate solver using a given guess + tiled solver + conjugate gradient.

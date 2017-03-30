@@ -30,7 +30,7 @@ namespace fi = field_interpolation;
 
 VISITABLE_STRUCT(ImVec2, x, y);
 VISITABLE_STRUCT(fi::Weights, data_pos, data_gradient, model_0, model_1, model_2, model_3, model_4, gradient_smoothness);
-VISITABLE_STRUCT(fi::SolveOptions, tile, tile_size, cg, error_tolerance);
+VISITABLE_STRUCT(fi::SolveOptions, tile, tile_size, cg, max_iterations, error_tolerance);
 
 using Vec2List = std::vector<ImVec2>;
 
@@ -74,9 +74,7 @@ struct Options
 	fi::Weights        weights;
 	bool               exact_solve          = true;
 	int                downscale_factor     =  3;
-	bool               compansate_downscale = true;
-	bool               cg                   = true;
-	float              error_tolerance      =  1e-3f;
+	fi::SolveOptions   solve_options;
 
 	Options()
 	{
@@ -91,7 +89,7 @@ struct Options
 	}
 };
 
-VISITABLE_STRUCT(Options, noise, resolution, shapes, weights, exact_solve, downscale_factor, compansate_downscale, cg, error_tolerance);
+VISITABLE_STRUCT(Options, noise, resolution, shapes, weights, exact_solve, downscale_factor, solve_options);
 
 struct Result
 {
@@ -118,7 +116,7 @@ std::vector<RGBA> generate_heatmap(const std::vector<float>& data, float min, fl
 
 	std::vector<RGBA> colors;
 	for (float value : data) {
-		if (max <= min) {
+		if (max <= min || !std::isfinite(value)) {
 			colors.emplace_back(RGBA{0,0,0,255});
 		} else {
 			int colormap_x = math::remap_clamp(value, min, max, 0, colormap_width - 1);
@@ -276,18 +274,14 @@ auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Opti
 
 			sdf = fi::upscale_field(solution_small.data(), sizes_small, {width, height});
 
-			if (options.compansate_downscale) {
-				for (auto& value : sdf) {
-					value *= options.downscale_factor;
-				}
+			for (auto& value : sdf) {
+				value *= options.downscale_factor;
 			}
 		} else {
 			sdf = std::vector<float>(num_unknowns, 0.0f);
 		}
 
-		if (options.cg) {
-			sdf = solve_sparse_linear_with_guess(field.eq, sdf, options.error_tolerance);
-		}
+		sdf = solve_tiled_with_guess(field.eq, sdf, field.sizes, options.solve_options);
 	}
 
 	if (sdf.size() != num_unknowns) {
@@ -450,6 +444,21 @@ bool show_noise_options(NoiseOptions* options)
 	return changed;
 }
 
+bool show_solve_options(fi::SolveOptions* options)
+{
+	bool changed = false;
+	changed |= ImGui::Checkbox("tile", &options->tile);
+	if (options->tile) {
+		changed |= ImGui::SliderInt("tile_size", &options->tile_size, 0, 200);
+	}
+	changed |= ImGui::Checkbox("cg", &options->cg);
+	if (options->cg) {
+		changed |= ImGui::SliderInt("max_iterations", &options->max_iterations, 0, 200);
+		changed |= ImGui::SliderFloat("error_tolerance", &options->error_tolerance, 1e-6f, 1, "%.6f", 4);
+	}
+	return changed;
+}
+
 bool show_options(Options* options)
 {
 	bool changed = false;
@@ -483,13 +492,7 @@ bool show_options(Options* options)
 	changed |= ImGui::Checkbox("Exact solve", &options->exact_solve);
 	if (!options->exact_solve) {
 		changed |= ImGui::SliderInt("downscale_factor", &options->downscale_factor, 1, 10);
-		if (2 <= options->downscale_factor) {
-			changed |= ImGui::Checkbox("compansate_downscale", &options->compansate_downscale);
-		}
-		changed |= ImGui::Checkbox("cg", &options->cg);
-		if (options->cg) {
-			changed |= ImGui::SliderFloat("error_tolerance", &options->error_tolerance, 1e-6f, 1, "%.6f", 4);
-		}
+		changed |= show_solve_options(&options->solve_options);
 	}
 
 	return changed;
