@@ -4,7 +4,10 @@
 
 #include <SDL2/SDL.h>
 #include <stb/stb_image.h>
+#include <visit_struct/visit_struct.hpp>
 
+#include <configuru.hpp>
+#include <emath/math.hpp>
 #include <emilib/dual.hpp>
 #include <emilib/file_system.hpp>
 #include <emilib/gl_lib.hpp>
@@ -15,7 +18,6 @@
 #include <emilib/imgui_sdl.hpp>
 #include <emilib/irange.hpp>
 #include <emilib/marching_squares.hpp>
-#include <emilib/math.hpp>
 #include <emilib/scope_exit.hpp>
 #include <emilib/tga.hpp>
 #include <emilib/timer.hpp>
@@ -23,8 +25,6 @@
 
 #include <field_interpolation/field_interpolation.hpp>
 #include <field_interpolation/sparse_linear.hpp>
-
-#include "serialize_configuru.hpp"
 
 namespace fi = field_interpolation;
 
@@ -107,6 +107,11 @@ struct Result
 
 using Dualf = emilib::Dual<float>;
 
+void log_errors(const std::string& msg)
+{
+	LOG_F(ERROR, "%s", msg.c_str());
+}
+
 std::vector<RGBA> generate_heatmap(const std::vector<float>& data, float min, float max)
 {
 	int colormap_width, colormap_height;
@@ -119,7 +124,7 @@ std::vector<RGBA> generate_heatmap(const std::vector<float>& data, float min, fl
 		if (max <= min || !std::isfinite(value)) {
 			colors.emplace_back(RGBA{0,0,0,255});
 		} else {
-			int colormap_x = math::remap_clamp(value, min, max, 0, colormap_width - 1);
+			int colormap_x = emath::remap_clamp(value, min, max, 0, colormap_width - 1);
 			CHECK_F(0 <= colormap_x && colormap_x < colormap_width);
 			colors.emplace_back(colormap[colormap_x]);
 		}
@@ -129,7 +134,7 @@ std::vector<RGBA> generate_heatmap(const std::vector<float>& data, float min, fl
 
 auto circle_point(const Shape& shape, Dualf t) -> std::pair<Dualf, Dualf>
 {
-	Dualf angle = t * math::TAUf + shape.rotation;
+	Dualf angle = t * emath::TAUf + shape.rotation;
 	return std::make_pair(std::cos(angle), std::sin(angle));
 }
 
@@ -138,7 +143,7 @@ auto poly_point(const Shape& shape, Dualf t) -> std::pair<Dualf, Dualf>
 	CHECK_GE_F(shape.polygon_sides, 3u);
 
 	auto polygon_corner = [&](int corner) {
-		float angle = math::TAUf * corner / shape.polygon_sides;
+		float angle = emath::TAUf * corner / shape.polygon_sides;
 		angle += shape.rotation;
 		return ImVec2(std::cos(angle), std::sin(angle));
 	};
@@ -163,8 +168,8 @@ auto shape_point(const Shape& shape, Dualf t)
 	std::tie(circle_x, circle_y) = circle_point(shape, t);
 	std::tie(poly_x,   poly_y)   = poly_point(shape,   t);
 
-	Dualf x = math::lerp(poly_x, circle_x, shape.circleness);
-	Dualf y = math::lerp(poly_y, circle_y, shape.circleness);
+	Dualf x = emath::lerp(poly_x, circle_x, shape.circleness);
+	Dualf y = emath::lerp(poly_y, circle_y, shape.circleness);
 
 	return std::make_pair(ImVec2(x.real, y.real), ImVec2(y.eps, -x.eps));
 }
@@ -363,7 +368,7 @@ Result generate(const Options& options)
 		area_pixels += insideness;
 	}
 
-	result.blob_area = area_pixels / math::sqr(resolution - 1);
+	result.blob_area = area_pixels / emath::sqr(resolution - 1);
 
 	result.duration_seconds = timer.secs();
 	return result;
@@ -633,7 +638,7 @@ Field1DInput load_1d_field()
 	Field1DInput input;
 	if (fs::file_exists("1d_field.json")) {
 		const auto config = configuru::parse_file("1d_field.json", configuru::JSON);
-		from_config(&input, config);
+		configuru::deserialize(&input, config, log_errors);
 	}
 	return input;
 }
@@ -677,7 +682,7 @@ bool show_options(Field1DInput* input)
 void show_1d_field_window(Field1DInput* input)
 {
 	if (show_options(input)) {
-		configuru::dump_file("1d_field.json", to_config(*input), configuru::JSON);
+		configuru::dump_file("1d_field.json", configuru::serialize(*input), configuru::JSON);
 	}
 
 	fi::LatticeField field{{input->resolution}};
@@ -763,7 +768,7 @@ void show_1d_denoiser_window()
 	Vec2List gt;
 
 	for (int i : emilib::irange(s_num_points)) {
-		float t = math::remap(i, 0, s_num_points - 1, 0, 1);
+		float t = emath::remap(i, 0, s_num_points - 1, 0, 1);
 		float f = s_freq * (1 + t * s_chirp_factor);
 		float y = s_amplitude * std::sin(t * f);
 		gt.emplace_back(t, y);
@@ -778,7 +783,7 @@ void show_1d_denoiser_window()
 	add_field_constraints(&field, s_weights);
 
 	for (const ImVec2& p : points) {
-		float x = math::remap(p.x, 0, 1, 0, s_resolution - 1.0f);
+		float x = emath::remap(p.x, 0, 1, 0, s_resolution - 1.0f);
 		add_value_constraint(&field, &x, p.y, s_weights.data_pos);
 	}
 
@@ -804,7 +809,7 @@ void show_1d_denoiser_window()
 	auto canvas_from_field = [=](float t, float y) {
 		return ImVec2{
 			canvas_pos.x + canvas_size.x * t,
-			canvas_pos.y + math::remap(y, -1, +1, canvas_size.y, 0)
+			canvas_pos.y + emath::remap(y, -1, +1, canvas_size.y, 0)
 		};
 	};
 
@@ -826,7 +831,7 @@ void show_1d_denoiser_window()
 
 	Vec2List solution_points;
 	for (auto i : emilib::irange(num_unknowns)) {
-		float t = math::remap(i, 0, num_unknowns - 1, 0, 1);
+		float t = emath::remap(i, 0, num_unknowns - 1, 0, 1);
 		solution_points.push_back(canvas_from_field(t, solution[i]));
 	}
 
@@ -858,8 +863,8 @@ void show_2d_field_window()
 	for (int y = 0; y < 4; ++y) {
 		for (int x = 0; x < 4; ++x) {
 			const float pos[2] = {
-				math::remap(x, 0.0f, 3.0f, 0.0f, s_resolution - 1.0f),
-				math::remap(y, 0.0f, 3.0f, 0.0f, s_resolution - 1.0f),
+				emath::remap(x, 0.0f, 3.0f, 0.0f, s_resolution - 1.0f),
+				emath::remap(y, 0.0f, 3.0f, 0.0f, s_resolution - 1.0f),
 			};
 			add_value_constraint(&field, pos, values[y * 4 + x], s_weights.data_pos);
 			const float zero[2] = {0,0};
@@ -913,7 +918,7 @@ struct FieldGui
 	{
 		if (fs::file_exists("sdf_input.json")) {
 			const auto config = configuru::parse_file("sdf_input.json", configuru::JSON);
-			from_config(&options, config);
+			configuru::deserialize(&options, config, log_errors);
 		}
 		calc();
 	}
@@ -931,7 +936,7 @@ struct FieldGui
 	{
 		if (show_options(&options)) {
 			calc();
-			const auto config = to_config(options);
+			const auto config = configuru::serialize(options);
 			configuru::dump_file("sdf_input.json", config, configuru::JSON);
 		}
 	}
@@ -1047,8 +1052,8 @@ int main(int argc, char* argv[])
 			imgui_sdl.on_event(event);
 		}
 		gl::TempViewPort::set_back_buffer_size(
-			math::round_to_int(imgui_sdl.width_pixels()),
-			math::round_to_int(imgui_sdl.height_pixels()));
+			emath::round_to_int(imgui_sdl.width_pixels()),
+			emath::round_to_int(imgui_sdl.height_pixels()));
 		imgui_sdl.new_frame();
 
 		ImGui::ShowTestWindow();

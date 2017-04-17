@@ -26,7 +26,12 @@ else
 fi
 
 CPPFLAGS="$CPPFLAGS -O2"
-COMPILE_FLAGS="$CPPFLAGS -I . -isystem third_party -isystem third_party/emilib -isystem third_party/visit_struct/include"
+COMPILE_FLAGS="$CPPFLAGS"
+COMPILE_FLAGS="$COMPILE_FLAGS -I ."
+COMPILE_FLAGS="$COMPILE_FLAGS -isystem third_party"
+COMPILE_FLAGS="$COMPILE_FLAGS -isystem third_party/emath"
+COMPILE_FLAGS="$COMPILE_FLAGS -isystem third_party/emilib"
+COMPILE_FLAGS="$COMPILE_FLAGS -isystem third_party/visit_struct/include"
 LDLIBS="-lstdc++ -lpthread -ldl"
 LDLIBS="$LDLIBS -lSDL2 -lGLEW"
 # LDLIBS="$LDLIBS -ljemalloc"
@@ -35,6 +40,7 @@ LDLIBS="$LDLIBS -lSDL2 -lGLEW"
 if [ "$(uname)" == "Darwin" ]; then
 	# COMPILE_FLAGS="$COMPILE_FLAGS -isystem /opt/local/include/eigen3" # port
 	COMPILE_FLAGS="$COMPILE_FLAGS -isystem /usr/local/Cellar/eigen/3.3.3/include/eigen3" # brew
+	LDLIBS="$LDLIBS -framework OpenAL"
 	LDLIBS="$LDLIBS -framework OpenGL"
 else
 	COMPILE_FLAGS="$COMPILE_FLAGS -isystem /usr/include/eigen3"
