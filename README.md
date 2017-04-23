@@ -56,6 +56,8 @@ Having the solution be a least squares approximation has the advantage that we c
 
 ![weak smoothness](images/noisy_trust_the_data.png) ![medium smoothness](images/noisy_medium.png) ![strong smoothness](images/noisy_smooth.png)
 
+Another way to view the above images is how much we trust the data decreases left-to-right.
+
 ## Data interpolation
 In the initial example the data constraints happened to lie perfectly on lattice coordinates. What if they don't?
 
@@ -101,7 +103,10 @@ A common problem in 3D scanning is reconstructing a mesh (surface) from a set of
   * `f(x) = 0` (the field is zero at the surface point)
   * `∇ f(x) = n` (the gradient of the field at the surface point is the point normal)
 
-The solution will then be a smooth approximation of a [signed distance field](https://en.wikipedia.org/wiki/Signed_distance_function). One can then use e.g. [Marching cubes](https://en.wikipedia.org/wiki/Marching_cubes) to the resulting field to produce a mesh.
+The solution will then be a smooth approximation of a [signed distance field](https://en.wikipedia.org/wiki/Signed_distance_function). One can then use e.g. [Marching cubes](https://en.wikipedia.org/wiki/Marching_cubes) to the resulting field to produce a mesh. The field will be smooth and accurate near `f(x=0)` (the mesh boundary), but depending on the quality of the input points (their noise level) the distances will likely be quite off further away from the surface. However, for mesh reconstruction it only needs to be accurate around `f(x=0)`.
+
+#### Making it work without point normals
+Interestingly, surface reconstruction can be made to work even if your point data lacks normals, as long as there is some indication of outside/inside. For instance, if you have some area of the field (e.g. the boundary) that you know to be outside of the mesh you can add weak constraints that these places have a distance equal to the distance to the nearest data point. It doesn't have to be exact, just a helper for the solver. The reason this works is that the data points (`f(x) = 0`) acts like pivots for the smoothness constraints (which is trying to make the field "straight"). For instance, if you feed the solver with a smoothness constraint and the data  `f(0) = 10`, `f(10) = 0`, then it will be able to figure out that `f(20) = -10`. This still works for noisy particles in 2D and 3D. Another approach it to find extreme points (topmost, leftmost etc) and add simple gradients for these (down, right, etc).
 
 ## Differences with Smooth Signed Distance Surface Reconstruction:
 The most similar work in this area is [SSD](http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.440.3739&rep=rep1&type=pdf). Differences include:

@@ -69,11 +69,12 @@ VISITABLE_STRUCT(NoiseOptions, seed, pos_stddev, normal_stddev, outliers);
 struct Options
 {
 	NoiseOptions       noise;
-	size_t             resolution           = 24;
+	size_t             resolution                  = 24;
 	std::vector<Shape> shapes;
 	fi::Weights        weights;
-	bool               exact_solve          = true;
-	int                downscale_factor     =  3;
+	float              boundary_weight             =  0.001f;
+	bool               exact_solve                 = true;
+	int                downscale_factor            =  3;
 	fi::SolveOptions   solve_options;
 
 	Options()
@@ -89,7 +90,7 @@ struct Options
 	}
 };
 
-VISITABLE_STRUCT(Options, noise, resolution, shapes, weights, exact_solve, downscale_factor, solve_options);
+VISITABLE_STRUCT(Options, noise, resolution, shapes, weights, boundary_weight, exact_solve, downscale_factor, solve_options);
 
 struct Result
 {
@@ -241,6 +242,45 @@ Vec2List on_lattice(const Vec2List& positions, float resolution)
 	return lattice_positions;
 }
 
+fi::LatticeField generate_sdf_field(int width, int height, const Options& options, const Vec2List& positions, const Vec2List& normals)
+{
+	CHECK_EQ_F(positions.size(), normals.size());
+	auto field = sdf_from_points(
+			{width, height}, options.weights, positions.size(), &positions[0].x, &normals[0].x, nullptr);
+
+	if (options.boundary_weight > 0)
+	{
+		const float weight = options.boundary_weight;
+		for (int y = 0; y < height; ++y)
+		{
+			for (int x = 0; x < width; ++x)
+			{
+				bool is_on_border =
+					x == 0 || x == width - 1 ||
+					y == 0 || y == height - 1;
+
+				if (is_on_border)
+				{
+					float closest_dist_sq = std::numeric_limits<float>::infinity();
+					for (const auto& pos : positions)
+					{
+						const float dx = pos.x - x;
+						const float dy = pos.y - y;
+						closest_dist_sq = std::min(closest_dist_sq, dx * dx + dy * dy);
+					}
+					const float expected_value = std::sqrt(closest_dist_sq);
+					const int index = y * width + x;
+					add_equation(&field.eq, fi::Weight{weight}, {expected_value}, {
+						{index, 1.0f}
+					});
+				}
+			}
+		}
+	}
+
+	return field;
+}
+
 auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Options& options)
 {
 	LOG_SCOPE_F(1, "generate_sdf");
@@ -255,8 +295,7 @@ auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Opti
 
 	const Vec2List large_lattice_positions = on_lattice(positions, options.resolution);
 
-	const auto field = sdf_from_points(
-		{width, height}, options.weights, large_lattice_positions.size(), &large_lattice_positions[0].x, &normals[0].x, nullptr);
+	const auto field = generate_sdf_field(width, height, options, large_lattice_positions, normals);
 
 	std::vector<float> sdf;
 	if (options.exact_solve) {
@@ -268,12 +307,9 @@ auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Opti
 			const int num_unknowns_small = resolution_small * resolution_small;
 			const std::vector<int> sizes_small{resolution_small, resolution_small};
 
-			auto weights = options.weights;
-
 			const Vec2List small_lattice_positions = on_lattice(positions, resolution_small);
 
-			const auto field_small = sdf_from_points(
-				sizes_small, weights, small_lattice_positions.size(), &small_lattice_positions[0].x, &normals[0].x, nullptr);
+			const auto field_small = generate_sdf_field(resolution_small, resolution_small, options, small_lattice_positions, normals);
 
 			const auto solution_small = solve_sparse_linear(field_small.eq, num_unknowns_small);
 
@@ -493,6 +529,7 @@ bool show_options(Options* options)
 	changed |= show_noise_options(&options->noise);
 	ImGui::Separator();
 	changed |= show_weights(&options->weights);
+	changed |= ImGui::SliderFloat("boundary_weight", &options->boundary_weight, 0, 1000, "%.3f", 4);
 
 	changed |= ImGui::Checkbox("Exact solve", &options->exact_solve);
 	if (!options->exact_solve) {
