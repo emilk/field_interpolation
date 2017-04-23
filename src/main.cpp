@@ -76,6 +76,7 @@ struct Options
 	bool               exact_solve                 = true;
 	int                downscale_factor            =  3;
 	fi::SolveOptions   solve_options;
+	int                marching_squares_upsampling =  1;
 
 	Options()
 	{
@@ -90,7 +91,7 @@ struct Options
 	}
 };
 
-VISITABLE_STRUCT(Options, noise, resolution, shapes, weights, boundary_weight, exact_solve, downscale_factor, solve_options);
+VISITABLE_STRUCT(Options, noise, resolution, shapes, weights, boundary_weight, exact_solve, downscale_factor, solve_options, marching_squares_upsampling);
 
 struct Result
 {
@@ -537,6 +538,8 @@ bool show_options(Options* options)
 		changed |= show_solve_options(&options->solve_options);
 	}
 
+	changed |= ImGui::SliderInt("marching_squares_upsampling", &options->marching_squares_upsampling, 1, 10);
+
 	return changed;
 }
 
@@ -927,6 +930,56 @@ void show_2d_field_window()
 	// show_field_equations(field);
 }
 
+std::vector<float> bicubic_upsample(int* io_width, int* io_height, const float* values, int upsample)
+{
+	CHECK_GT_F(upsample, 1);
+
+	const int small_width = *io_width;
+	const int small_height = *io_height;
+	const size_t large_width = upsample * small_width - upsample + 1;
+	const size_t large_height = upsample * small_height - upsample + 1;
+
+	const auto value_at = [&](int x, int y)
+	{
+		x = emath::clamp(x, 0, small_width - 1);
+		y = emath::clamp(y, 0, small_height - 1);
+		return values[y * small_width + x];
+	};
+
+	std::vector<float> large;
+	large.reserve(large_width * large_height);
+	for (int ly = 0; ly < large_height; ++ly) {
+		for (int lx = 0; lx < large_width; ++lx) {
+			float tx = static_cast<float>(lx % upsample) / static_cast<float>(upsample);
+			float ty = static_cast<float>(ly % upsample) / static_cast<float>(upsample);
+
+			int sx = lx / upsample;
+			int sy = ly / upsample;
+
+			float values[4][4] {
+				{ value_at(sx - 1, sy - 1), value_at(sx + 0, sy - 1), value_at(sx + 1, sy - 1), value_at(sx + 2, sy - 1) },
+				{ value_at(sx - 1, sy + 0), value_at(sx + 0, sy + 0), value_at(sx + 1, sy + 0), value_at(sx + 2, sy + 0) },
+				{ value_at(sx - 1, sy + 1), value_at(sx + 0, sy + 1), value_at(sx + 1, sy + 1), value_at(sx + 2, sy + 1) },
+				{ value_at(sx - 1, sy + 2), value_at(sx + 0, sy + 2), value_at(sx + 1, sy + 2), value_at(sx + 2, sy + 2) },
+			};
+
+			large.push_back(
+				emath::catmull_rom(ty,
+					emath::catmull_rom(tx, values[0][0], values[0][1], values[0][2], values[0][3]),
+					emath::catmull_rom(tx, values[1][0], values[1][1], values[1][2], values[1][3]),
+					emath::catmull_rom(tx, values[2][0], values[2][1], values[2][2], values[2][3]),
+					emath::catmull_rom(tx, values[3][0], values[3][1], values[3][2], values[3][3])
+				)
+			);
+		}
+	}
+
+	*io_width = large_width;
+	*io_height = large_height;
+
+	return large;
+}
+
 std::vector<float> iso_surface(int width, int height, const float* values, float iso)
 {
 	std::vector<float> iso_at_zero;
@@ -983,8 +1036,15 @@ struct FieldGui
 		const float iso_min = *min_element(result.sdf.begin(), result.sdf.end());
 		const float iso_max = *max_element(result.sdf.begin(), result.sdf.end());
 
-		std::vector<float> zero_lines = iso_surface(options.resolution, options.resolution, result.sdf.data(), 0.0f);
-		const float lines_area = emilib::calc_area(zero_lines.size() / 4, zero_lines.data()) / math::sqr(options.resolution - 1);
+		std::vector<float> iso_source = result.sdf;
+		int iso_width = options.resolution;
+		int iso_height = options.resolution;
+		if (options.marching_squares_upsampling > 1) {
+			iso_source = bicubic_upsample(&iso_width, &iso_height, iso_source.data(), options.marching_squares_upsampling);
+		}
+
+		std::vector<float> zero_lines = iso_surface(iso_width, iso_height, iso_source.data(), 0.0f);
+		const float lines_area = emilib::calc_area(zero_lines.size() / 4, zero_lines.data()) / emath::sqr(iso_width - 1);
 
 		ImGui::Text("%lu unknowns", options.resolution * options.resolution);
 		ImGui::Text("%lu equations", result.field.eq.rhs.size());
@@ -1014,10 +1074,10 @@ struct FieldGui
 		if (draw_cells) { show_cells(options, canvas_pos, canvas_size); }
 		if (draw_points) { show_points(options, result.point_positions, result.point_normals, canvas_pos, canvas_size); }
 		if (draw_iso_lines) {
-			for (int i = math::floor_to_int(iso_min / iso_spacing); i <= math::ceil_to_int(iso_max / iso_spacing); ++i) {
-				auto iso_lines = iso_surface(options.resolution, options.resolution, result.sdf.data(), i * iso_spacing);
+			for (int i = emath::floor_to_int(iso_min / iso_spacing); i <= emath::ceil_to_int(iso_max / iso_spacing); ++i) {
+				auto iso_lines = iso_surface(iso_width, iso_height, iso_source.data(), i * iso_spacing);
 				int color = i == 0 ? ImColor(1.0f, 0.0f, 0.0f, 1.0f) : ImColor(0.5f, 0.5f, 0.5f, 0.5f);
-				show_outline(options.resolution, iso_lines, canvas_pos, canvas_size, color, i == 0 && draw_blob_normals);
+				show_outline(iso_width, iso_lines, canvas_pos, canvas_size, color, i == 0 && draw_blob_normals);
 			}
 		}
 
