@@ -52,16 +52,30 @@ void add_equation(
 
 // ----------------------------------------------------------------------------
 
-using VectorXr = Eigen::Matrix<float, Eigen::Dynamic, 1>;
-using SparseMatrix = Eigen::SparseMatrix<float>;
+using VectorXf = Eigen::Matrix<float, Eigen::Dynamic, 1>;
+using VectorXd = Eigen::Matrix<double, Eigen::Dynamic, 1>;
+using SparseMatrixf = Eigen::SparseMatrix<float>;
+using SparseMatrixd = Eigen::SparseMatrix<double>;
 
-SparseMatrix as_sparse_matrix(
+SparseMatrixf as_sparse_matrix_float(
 	const std::vector<Triplet>& triplets, size_t num_rows, size_t num_columns)
 {
-	LOG_SCOPE_F(1, "as_sparse_matrix");
+	LOG_SCOPE_F(1, "as_sparse_matrix_float");
 
-#if 0
-	std::vector<Eigen::Triplet<float>> eigen_triplets;
+	static_assert(sizeof(Triplet) == sizeof(Eigen::Triplet<float>), "");
+	SparseMatrixf A(num_rows, num_columns);
+	const Eigen::Triplet<float>* ptr = reinterpret_cast<const Eigen::Triplet<float>*>(triplets.data());
+	A.setFromTriplets(ptr, ptr + triplets.size());
+	A.makeCompressed();
+	return A;
+}
+
+SparseMatrixd as_sparse_matrix_double(
+	const std::vector<Triplet>& triplets, size_t num_rows, size_t num_columns)
+{
+	LOG_SCOPE_F(1, "as_sparse_matrix_double");
+
+	std::vector<Eigen::Triplet<double>> eigen_triplets;
 	eigen_triplets.reserve(triplets.size());
 	for (const auto& triplet : triplets) {
 		CHECK_GE_F(triplet.col, 0);
@@ -73,43 +87,38 @@ SparseMatrix as_sparse_matrix(
 		}
 	}
 
-	SparseMatrix A(num_rows, num_columns);
+	SparseMatrixd A(num_rows, num_columns);
 	A.setFromTriplets(eigen_triplets.begin(), eigen_triplets.end());
-#else
-	static_assert(sizeof(Triplet) == sizeof(Eigen::Triplet<float>), "");
-	SparseMatrix A(num_rows, num_columns);
-	const Eigen::Triplet<float>* ptr = reinterpret_cast<const Eigen::Triplet<float>*>(triplets.data());
-	A.setFromTriplets(ptr, ptr + triplets.size());
-#endif
 	A.makeCompressed();
 	return A;
 }
 
-VectorXr as_eigen_vector(const std::vector<float>& values)
+VectorXf as_eigen_vector(const std::vector<float>& values)
 {
-	return Eigen::Map<VectorXr>(const_cast<float*>(values.data()), values.size());
+	return Eigen::Map<VectorXf>(const_cast<float*>(values.data()), values.size());
 }
 
-std::vector<float> as_std_vector(const VectorXr& values)
+std::vector<float> as_std_vector(const VectorXf& values)
 {
 	return std::vector<float>(values.data(), values.data() + values.rows() * values.cols());
 }
 
-SparseMatrix make_square(const SparseMatrix& A)
+template<typename T>
+Eigen::SparseMatrix<T> make_square(const Eigen::SparseMatrix<T>& A)
 {
 	LOG_SCOPE_F(1, "Make AtA");
-	SparseMatrix AtA = A.transpose() * A;
+	Eigen::SparseMatrix<T> AtA = A.transpose() * A;
 	CHECK_EQ_F(AtA.rows(), AtA.cols());
 	AtA.makeCompressed();
 	return AtA;
 }
 
-std::vector<float> solve_sparse_linear(const LinearEquation& eq, int num_columns)
+std::vector<float> solve_sparse_linear_fast(const LinearEquation& eq, int num_columns)
 {
-	LOG_SCOPE_F(1, "solve_sparse_linear");
-	const SparseMatrix A = as_sparse_matrix(eq.triplets, eq.rhs.size(), num_columns);
-	const SparseMatrix AtA = make_square(A);
-	const VectorXr Atb = A.transpose() * as_eigen_vector(eq.rhs);
+	LOG_SCOPE_F(1, "solve_sparse_linear_fast");
+	const SparseMatrixf A = as_sparse_matrix_float(eq.triplets, eq.rhs.size(), num_columns);
+	const SparseMatrixf AtA = make_square(A);
+	const VectorXf Atb = A.transpose() * as_eigen_vector(eq.rhs);
 
 	LOG_F(1, "A nnz: %lu (%.3f%%)", A.nonZeros(),
 		  100.0f * A.nonZeros() / (A.rows() * A.cols()));
@@ -118,20 +127,20 @@ std::vector<float> solve_sparse_linear(const LinearEquation& eq, int num_columns
 
 	LOG_SCOPE_F(1, "Solve");
 	// Resolution 177, 2 x 100k points
-	// Eigen::SparseQR<SparseMatrix, Eigen::COLAMDOrdering<int>> solver(AtA); // SLOW
-	// Eigen::BiCGSTAB<SparseMatrix> solver(AtA); // 1400 ms
-	// Eigen::ConjugateGradient<SparseMatrix, Eigen::Upper> solver(AtA); // 1200 ms
-	// Eigen::SparseLU<SparseMatrix, Eigen::COLAMDOrdering<int>> solver(AtA); // 600 ms
-	// Eigen::SimplicialLDLT<SparseMatrix> solver(AtA); // 500 ms
-	// Eigen::SimplicialCholesky<SparseMatrix> solver(AtA); // 500 ms
-	Eigen::SimplicialLLT<SparseMatrix> solver(AtA); // 400 ms
+	// Eigen::SparseQR<SparseMatrixf, Eigen::COLAMDOrdering<int>> solver(AtA); // SLOW
+	// Eigen::BiCGSTAB<SparseMatrixf> solver(AtA); // 1400 ms
+	// Eigen::ConjugateGradient<SparseMatrixf, Eigen::Upper> solver(AtA); // 1200 ms
+	// Eigen::SparseLU<SparseMatrixf, Eigen::COLAMDOrdering<int>> solver(AtA); // 600 ms
+	// Eigen::SimplicialLDLT<SparseMatrixf> solver(AtA); // 500 ms
+	// Eigen::SimplicialCholesky<SparseMatrixf> solver(AtA); // 500 ms
+	Eigen::SimplicialLLT<SparseMatrixf> solver(AtA); // 400 ms
 
 	if (solver.info() != Eigen::Success) {
 		LOG_F(WARNING, "solver.compute failed");
 		return {};
 	}
 
-	VectorXr solution = solver.solve(Atb);
+	VectorXf solution = solver.solve(Atb);
 
 	if (solver.info() != Eigen::Success) {
 		// std::string error = solver.lastErrorMessage();
@@ -143,6 +152,38 @@ std::vector<float> solve_sparse_linear(const LinearEquation& eq, int num_columns
 	return as_std_vector(solution);
 }
 
+std::vector<float> solve_sparse_linear_exact(const LinearEquation& eq, int num_columns)
+{
+	LOG_SCOPE_F(1, "solve_sparse_linear_exact");
+	const SparseMatrixd A = as_sparse_matrix_double(eq.triplets, eq.rhs.size(), num_columns);
+	const SparseMatrixd AtA = make_square(A);
+	const VectorXd Atb = A.transpose() * as_eigen_vector(eq.rhs).cast<double>();
+
+	LOG_F(1, "A nnz: %lu (%.3f%%)", A.nonZeros(),
+		  100.0f * A.nonZeros() / (A.rows() * A.cols()));
+	LOG_F(1, "AtA nnz: %lu (%.3f%%)", AtA.nonZeros(),
+		  100.0f * AtA.nonZeros() / (AtA.rows() * AtA.cols()));
+
+	LOG_SCOPE_F(1, "Solve");
+	Eigen::SimplicialLLT<SparseMatrixd> solver(AtA);
+
+	if (solver.info() != Eigen::Success) {
+		LOG_F(WARNING, "solver.compute failed");
+		return {};
+	}
+
+	VectorXd solution = solver.solve(Atb);
+
+	if (solver.info() != Eigen::Success) {
+		// std::string error = solver.lastErrorMessage();
+		// LOG_F(WARNING, "solver.solve failed: %s", error.c_str());
+		LOG_F(WARNING, "solver.solve failed");
+		return {};
+	}
+
+	return as_std_vector(solution.cast<float>());
+}
+
 std::vector<float> solve_sparse_linear_with_guess(
 	const LinearEquation&     eq,
 	const std::vector<float>& guess,
@@ -151,19 +192,19 @@ std::vector<float> solve_sparse_linear_with_guess(
 {
 	LOG_SCOPE_F(1, "solve_sparse_linear_with_guess");
 
-	const SparseMatrix A = as_sparse_matrix(eq.triplets, eq.rhs.size(), guess.size());
-	const SparseMatrix AtA = make_square(A);
-	const VectorXr Atb = A.transpose() * as_eigen_vector(eq.rhs);
+	const SparseMatrixf A = as_sparse_matrix_float(eq.triplets, eq.rhs.size(), guess.size());
+	const SparseMatrixf AtA = make_square(A);
+	const VectorXf Atb = A.transpose() * as_eigen_vector(eq.rhs);
 
 	LOG_SCOPE_F(1, "solveWithGuess");
-	Eigen::BiCGSTAB<SparseMatrix> solver(AtA);
+	Eigen::BiCGSTAB<SparseMatrixf> solver(AtA);
 	if (0 < max_iterations) {
 		solver.setMaxIterations(max_iterations);
 	}
 	if (0 < error_tolerance) {
 		solver.setTolerance(error_tolerance);
 	}
-	const VectorXr solution = solver.solveWithGuess(Atb, as_eigen_vector(guess));
+	const VectorXf solution = solver.solveWithGuess(Atb, as_eigen_vector(guess));
 
 	LOG_F(1, "CG iterations: %lu", solver.iterations());
 	LOG_F(1, "CG error:      %f",  solver.error());
@@ -174,10 +215,10 @@ std::vector<float> solve_sparse_linear_with_guess(
 /// Break the lattice into tiles, each tile_size^D big.
 /// Each tile is solved separately, and the results are combined.
 /// The produces a result where the high frequency components are very accurate.
-VectorXr tile_solver_square(
-	const SparseMatrix&     A_full,
-	const VectorXr&         b_full,
-	const VectorXr&         guess_full,
+VectorXf tile_solver_square(
+	const SparseMatrixf&     A_full,
+	const VectorXf&         b_full,
+	const VectorXf&         guess_full,
 	const std::vector<int>& sizes_full,
 	int                     tile_size)
 {
@@ -226,13 +267,13 @@ VectorXr tile_solver_square(
 	struct Tile
 	{
 		std::vector<Eigen::Triplet<float>> triplets;
-		VectorXr                           rhs;
+		VectorXf                           rhs;
 	};
 
 	std::vector<Tile> tiles(num_tiles_total);
 	for (int tile_index = 0; tile_index < num_tiles_total; ++tile_index) {
 		ERROR_CONTEXT("tile_index", tile_index);
-		tiles[tile_index].rhs = VectorXr::Zero(unknowns_per_tile);
+		tiles[tile_index].rhs = VectorXf::Zero(unknowns_per_tile);
 
 		// Add small regularization, needed for edge tiles which extends outside of lattice:
 		for (int i = 0; i < unknowns_per_tile; ++i) {
@@ -248,7 +289,7 @@ VectorXr tile_solver_square(
 	}
 
 	for (int k=0; k < A_full.outerSize(); ++k) {
-		for (SparseMatrix::InnerIterator it(A_full, k); it; ++it) {
+		for (SparseMatrixf::InnerIterator it(A_full, k); it; ++it) {
 			int row_tile, row_index;
 			int col_tile, col_index;
 
@@ -267,7 +308,7 @@ VectorXr tile_solver_square(
 	}
 
 	LOG_SCOPE_F(1, "solving tiles");
-	VectorXr solution_full = guess_full;
+	VectorXf solution_full = guess_full;
 
 	int num_failures = 0;
 
@@ -278,13 +319,13 @@ VectorXr tile_solver_square(
 			continue;
 		}
 
-		SparseMatrix A_tile(unknowns_per_tile, unknowns_per_tile);
+		SparseMatrixf A_tile(unknowns_per_tile, unknowns_per_tile);
 		A_tile.setFromTriplets(tile.triplets.begin(), tile.triplets.end());
 		A_tile.makeCompressed();
 
-		Eigen::SimplicialLLT<SparseMatrix> solver_tile(A_tile);
+		Eigen::SimplicialLLT<SparseMatrixf> solver_tile(A_tile);
 		if (solver_tile.info() != Eigen::Success) { num_failures += 1; continue; }
-		VectorXr solution_tile = solver_tile.solve(tile.rhs);
+		VectorXf solution_tile = solver_tile.solve(tile.rhs);
 		if (solver_tile.info() != Eigen::Success) { num_failures += 1; continue; }
 
 		CHECK_GE_F(solution_tile.size(), unknowns_per_tile);
@@ -335,11 +376,11 @@ std::vector<float> solve_tiled_with_guess(
 		return {};
 	}
 
-	const VectorXr b = as_eigen_vector(eq.rhs);
+	const VectorXf b = as_eigen_vector(eq.rhs);
 
-	const SparseMatrix A = as_sparse_matrix(eq.triplets, eq.rhs.size(), num_unknowns);
-	const SparseMatrix AtA = make_square(A);
-	const VectorXr Atb = A.transpose() * b;
+	const SparseMatrixf A = as_sparse_matrix_float(eq.triplets, eq.rhs.size(), num_unknowns);
+	const SparseMatrixf AtA = make_square(A);
+	const VectorXf Atb = A.transpose() * b;
 
 	LOG_F(1, "A nnz:   %lu (%.3f%%)", A.nonZeros(),
 		  100.0f * A.nonZeros() / (A.rows() * A.cols()));
@@ -349,7 +390,7 @@ std::vector<float> solve_tiled_with_guess(
 
 	// ------------------------------------------------------------------------
 
-	VectorXr guess = as_eigen_vector(guess_vec);
+	VectorXf guess = as_eigen_vector(guess_vec);
 
 	if (options.tile) {
 		guess = tile_solver_square(AtA, Atb, guess, sizes, options.tile_size);
@@ -357,7 +398,7 @@ std::vector<float> solve_tiled_with_guess(
 
 	if (options.cg) {
 		LOG_SCOPE_F(1, "solveWithGuess");
-		Eigen::BiCGSTAB<SparseMatrix> solver(AtA);
+		Eigen::BiCGSTAB<SparseMatrixf> solver(AtA);
 		if (0 < options.max_iterations) {
 			solver.setMaxIterations(options.max_iterations);
 		}

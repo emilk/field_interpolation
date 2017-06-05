@@ -59,7 +59,7 @@ void show_1d_denoiser_window()
 	}
 
 	const int num_unknowns = s_resolution;
-	std::vector<float> solution = solve_sparse_linear(field.eq, num_unknowns);
+	std::vector<float> solution = solve_sparse_linear_exact(field.eq, num_unknowns);
 	if (solution.empty()) { solution.resize(num_unknowns, 0.0f); }
 
 	// ------------------------------------------

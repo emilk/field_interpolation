@@ -42,7 +42,7 @@ void show_2d_field_window()
 	}
 
 	const size_t num_unknowns = s_resolution * s_resolution;
-	auto interpolated = solve_sparse_linear(field.eq, num_unknowns);
+	auto interpolated = solve_sparse_linear_exact(field.eq, num_unknowns);
 	if (interpolated.size() != num_unknowns) {
 		LOG_F(ERROR, "Failed to find a solution");
 		interpolated.resize(num_unknowns, 0.0f);

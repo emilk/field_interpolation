@@ -259,7 +259,7 @@ auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Opti
 
 	std::vector<float> sdf;
 	if (options.exact_solve) {
-		sdf = solve_sparse_linear(field.eq, num_unknowns);
+		sdf = solve_sparse_linear_exact(field.eq, num_unknowns);
 	} else {
 		if (2 <= options.downscale_factor) {
 			const int resolution_small = (options.resolution + options.downscale_factor - 1) / options.downscale_factor;
@@ -271,7 +271,7 @@ auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Opti
 
 			const auto field_small = generate_sdf_field(resolution_small, resolution_small, options, small_lattice_positions, normals);
 
-			const auto solution_small = solve_sparse_linear(field_small.eq, num_unknowns_small);
+			const auto solution_small = solve_sparse_linear_exact(field_small.eq, num_unknowns_small);
 
 			sdf = fi::upscale_field(solution_small.data(), sizes_small, {width, height});
 

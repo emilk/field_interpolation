@@ -107,7 +107,7 @@ void show_1d_field_window_for(Field1DInput* input)
 	add_field_constraints(&field, input->weights);
 
 	const size_t num_unknowns = input->resolution;
-	auto interpolated = solve_sparse_linear(field.eq, num_unknowns);
+	auto interpolated = solve_sparse_linear_exact(field.eq, num_unknowns);
 	if (interpolated.size() != num_unknowns) {
 		LOG_F(ERROR, "Failed to find a solution");
 		interpolated.resize(num_unknowns, 0.0f);

@@ -41,7 +41,9 @@ void add_equation(
 /// `rows` == `rhs.size()`.
 /// `num_columns` == number of unknowns
 /// Duplicate elements in triplets will be summed.
-std::vector<float> solve_sparse_linear(const LinearEquation& eq, int num_columns);
+std::vector<float> solve_sparse_linear_fast(const LinearEquation& eq, int num_columns);
+
+std::vector<float> solve_sparse_linear_exact(const LinearEquation& eq, int num_columns);
 
 /// Least square solving for x in Ax = rhs using an iterative Conjugate Gradient solver.
 /// `guess` is a starting guess for x.
