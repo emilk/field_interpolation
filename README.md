@@ -184,4 +184,4 @@ Now using the sampling method above we would expect to sample `N·W²` of the po
 
 ## Code
 * Proper build system
-* Clean up the different examples into separate files and similar structure
+
