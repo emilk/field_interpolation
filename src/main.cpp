@@ -9,6 +9,7 @@
 #include "field_1d.hpp"
 #include "gui.hpp"
 #include "interpolate_2d.hpp"
+#include "line_2d.hpp"
 #include "sdf_field.hpp"
 #include "sine_denoise_1d.hpp"
 
@@ -55,6 +56,11 @@ int main(int argc, char* argv[])
 
 		if (ImGui::Begin("2D SDF")) {
 			show_sdf_fields();
+		}
+		ImGui::End();
+
+		if (ImGui::Begin("line 2d")) {
+			show_line_2d();
 		}
 		ImGui::End();
 
