@@ -378,7 +378,7 @@ Result generate(const Options& options)
 	perturb_points(&result.point_positions, &result.point_normals, options.noise);
 
 	std::tie(result.field, result.sdf) = generate_sdf(result.point_positions, result.point_normals, options);
-	result.heatmap = generate_error_map(result.field.eq.triplets, result.sdf, result.field.eq.rhs);
+	result.heatmap = generate_error_map(result.field.eq, result.sdf);
 	result.heatmap_image = generate_heatmap(result.heatmap, 0, *max_element(result.heatmap.begin(), result.heatmap.end()));
 	CHECK_EQ_F(result.heatmap_image.size(), resolution * resolution);
 
@@ -649,7 +649,7 @@ void show_field_equations(const fi::LatticeField& field)
 	std::stringstream ss;
 	ss << field.eq;
 	std::string eq_str = ss.str();
-	ImGui::Text("%lu equations:\n", field.eq.rhs.size());
+	ImGui::Text("%lu unknowns:\n", field.eq.Atb.size());
 	ImGui::TextUnformatted(eq_str.c_str());
 }
 
@@ -1047,8 +1047,8 @@ struct FieldGui
 		const float lines_area = emilib::calc_area(zero_lines.size() / 4, zero_lines.data()) / emath::sqr(iso_width - 1);
 
 		ImGui::Text("%lu unknowns", options.resolution * options.resolution);
-		ImGui::Text("%lu equations", result.field.eq.rhs.size());
-		ImGui::Text("%lu non-zero values in matrix", result.field.eq.triplets.size());
+		ImGui::Text("%lu equations", result.field.eq.Atb.size());
+		ImGui::Text("%lu non-zero values in matrix", result.field.eq.AtA.size());
 		ImGui::Text("Calculated in %.3f s", result.duration_seconds);
 		ImGui::Text("Model area: %.3f, marching squares area: %.3f, sdf blob area: %.3f",
 			area(options.shapes), lines_area, result.blob_area);

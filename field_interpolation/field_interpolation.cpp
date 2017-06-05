@@ -67,14 +67,14 @@ bool add_value_constraint(
 	int num_samples = multilerp(interpolation_indices, interpolation_kernel, field->sizes, field->strides, pos, 0);
 	if (num_samples == 0) { return false; }
 
-	int row = field->eq.rhs.size();
+	LinearEquationPair pairs[TWO_TO_MAX_DIM];
 	float weight_sum = 0;
 	for (int i = 0; i < num_samples; ++i) {
-		float sample_weight = interpolation_kernel[i] * constraint_weight;
-		field->eq.triplets.emplace_back(row, interpolation_indices[i], sample_weight);
-		weight_sum += sample_weight;
+		float value_weight = constraint_weight * interpolation_kernel[i];
+		pairs[i] = {interpolation_indices[i], value_weight};
+		weight_sum += value_weight;
 	}
-	field->eq.rhs.emplace_back(weight_sum * value);
+	add_equation_impl(&field->eq, Weight{1.0f}, Rhs{weight_sum * value}, pairs, num_samples);
 
 	return true;
 }
@@ -168,9 +168,9 @@ bool add_gradient_constraint(
 		const int num_dim = field->sizes.size();
 
 		for (int d = 0; d < num_dim; ++d) {
-			const int row = field->eq.rhs.size();
 			const int num_corners = (1 << num_dim);
 			const float term_weight = constraint_weight * 2.0f / num_corners;
+			LinearEquationPair pairs[TWO_TO_MAX_DIM];
 
 			for (int corner = 0; corner < num_corners; ++corner) {
 				int corner_index = index;
@@ -180,9 +180,9 @@ bool add_gradient_constraint(
 				}
 				bool is_along_d = (corner >> d) % 2;
 				float sign = is_along_d ? +1.0f : -1.0f;
-				field->eq.triplets.emplace_back(row, corner_index, sign * term_weight);
+				pairs[corner] = {corner_index, sign * term_weight};
 			}
-			field->eq.rhs.emplace_back(constraint_weight * gradient[d]);
+			add_equation_impl(&field->eq, Weight{1.0f}, Rhs{constraint_weight * gradient[d]}, pairs, num_corners);
 		}
 		return true;
 	} else if (kernel == GradientKernel::kLinearInterpolation) {
@@ -219,18 +219,18 @@ bool add_gradient_constraint(
 		if (num_samples == 0) { return false; }
 
 		for (int d = 0; d < num_dim; ++d) {
-			int row = field->eq.rhs.size();
+			LinearEquationPair pairs[2 * TWO_TO_MAX_DIM];
 			float weight_sum = 0;
 			for (int i = 0; i < num_samples; ++i) {
 				// d f(x, y) / dx = gradient[0]
 				// d f(x, y) / dy = gradient[1]
 				// ...
 				const float sample_weight = interpolation_kernel[i] * constraint_weight;
-				field->eq.triplets.emplace_back(row, interpolation_indices[i] + 0,                 -sample_weight);
-				field->eq.triplets.emplace_back(row, interpolation_indices[i] + field->strides[d], +sample_weight);
+				pairs[2 * i + 0] = {interpolation_indices[i] + 0,                 -sample_weight};
+				pairs[2 * i + 1] = {interpolation_indices[i] + field->strides[d], +sample_weight};
 				weight_sum += sample_weight;
 			}
-			field->eq.rhs.emplace_back(weight_sum * gradient[d]);
+			add_equation_impl(&field->eq, Weight{1.0f}, Rhs{weight_sum * gradient[d]}, pairs, 2 * num_samples);
 		}
 
 		return true;
@@ -399,15 +399,12 @@ LatticeField sdf_from_points(
 	return field;
 }
 
-std::vector<float> generate_error_map(
-	const std::vector<Triplet>& triplets,
-	const std::vector<float>&   solution,
-	const std::vector<float>&   rhs)
+std::vector<float> generate_error_map(const LinearEquation& eq, const std::vector<float>& solution)
 {
-	std::vector<float> row_errors = rhs;
-	std::vector<float> sum_of_value_sq(rhs.size(), 0.0f);
+	std::vector<double> row_errors(eq.b.begin(), eq.b.end());
+	std::vector<double> sum_of_value_sq(eq.b.size(), 0.0);
 
-	for (const auto& triplet : triplets) {
+	for (const auto& triplet : eq.A) {
 		row_errors[triplet.row] -= solution[triplet.col] * triplet.value;
 		sum_of_value_sq[triplet.row] += triplet.value * triplet.value;
 	}
@@ -418,7 +415,7 @@ std::vector<float> generate_error_map(
 
 	std::vector<float> heatmap(solution.size(), 0.0f);
 
-	for (const auto& triplet : triplets) {
+	for (const auto& triplet : eq.A) {
 		if (sum_of_value_sq[triplet.row] != 0) {
 			float blame_fraction = (triplet.value * triplet.value) / sum_of_value_sq[triplet.row];
 			heatmap[triplet.col] += blame_fraction * row_errors[triplet.row];

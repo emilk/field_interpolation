@@ -94,6 +94,15 @@ struct Weights
 	GradientKernel gradient_kernel = GradientKernel::kCellEdges;
 };
 
+inline int product(const std::vector<int>& sizes)
+{
+	int result = 1;
+	for (auto size : sizes) {
+		result *= size;
+	}
+	return result;
+}
+
 struct LatticeField
 {
 	LinearEquation   eq;      ///< Accumulated equations.
@@ -101,7 +110,8 @@ struct LatticeField
 	std::vector<int> strides; ///< stride[d] == distance between adjacent values along dimension `d`
 
 	LatticeField() = default;
-	explicit LatticeField(const std::vector<int>& sizes_arg) : sizes(sizes_arg)
+
+	explicit LatticeField(const std::vector<int>& sizes_arg) : eq(product(sizes_arg)), sizes(sizes_arg)
 	{
 		int stride = 1;
 		for (int size : sizes) {
@@ -173,8 +183,7 @@ LatticeField sdf_from_points(
 	const float*            point_weights); // Optional (may be null).
 
 /// Calculate (Ax - b)^2 and distribute onto the solution space for a heatmap of blame.
-std::vector<float> generate_error_map(const std::vector<Triplet>& triplets,
-    const std::vector<float>& solution, const std::vector<float>& rhs);
+std::vector<float> generate_error_map(const LinearEquation& eq, const std::vector<float>& solution);
 
 /// Bilinear interpolation.
 /// In: product(small_sizes) floats.

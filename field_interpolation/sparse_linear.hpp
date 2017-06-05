@@ -14,11 +14,22 @@ struct Triplet
 	Triplet(int row_, int col_, float value_) : row(row_), col(col_), value(value_) {}
 };
 
-/// Sparse Ax=b where A is described by `triplets` and `rhs` is b.
+/// Sparse Ax=b and AᵀAx=Aᵀb
 struct LinearEquation
 {
-	std::vector<Triplet> triplets;
-	std::vector<float>   rhs;
+	// Used for calculating the error per equation/row:
+	std::vector<Triplet> A;
+	std::vector<float>   b;
+
+	// Used for solving the least squares problem:
+	std::vector<Triplet> AtA;
+	std::vector<double>  Atb;
+
+	int num_cols() const { return Atb.size(); }
+	int num_rows() const { return b.size(); }
+
+	LinearEquation() = default;
+	LinearEquation(int num_unknowns) : Atb(num_unknowns, 0.0f) {}
 };
 
 std::ostream& operator<<(std::ostream& os, const LinearEquation& eq);
@@ -33,8 +44,15 @@ struct Weight { float value; };
 struct Rhs    { float value; };
 
 /// Helper to add a row to the linear equation.
-void add_equation(
-	LinearEquation* eq, Weight weight, Rhs rhs, std::initializer_list<LinearEquationPair> pairs);
+void add_equation_impl(
+	LinearEquation* eq, Weight weight, Rhs rhs, const LinearEquationPair* pairs, int num_pairs);
+
+/// Helper to add a row to the linear equation.
+inline void add_equation(
+	LinearEquation* eq, Weight weight, Rhs rhs, std::initializer_list<LinearEquationPair> pairs)
+{
+	add_equation_impl(eq, weight, rhs, pairs.begin(), pairs.size());
+}
 
 /// Solve a sparse linear least squared problem.
 /// Construct matrix A from triplets. Solve for x in  A * x = rhs.

@@ -10,15 +10,15 @@ namespace field_interpolation {
 
 std::ostream& operator<<(std::ostream& os, const LinearEquation& eq)
 {
-	const size_t num_rows = eq.rhs.size();
+	const size_t num_rows = eq.b.size();
 	std::vector<std::vector<Triplet>> row_triplets(num_rows);
 
-	for (const auto& triplet : eq.triplets) {
+	for (const auto& triplet : eq.A) {
 		row_triplets[triplet.row].push_back(triplet);
 	}
 
 	for (size_t row = 0; row < num_rows; ++row) {
-		os << eq.rhs[row] << " = ";
+		os << eq.b[row] << " = ";
 		for (size_t triplet_idx = 0; triplet_idx < row_triplets[row].size(); ++triplet_idx) {
 			const auto& triplet = row_triplets[row][triplet_idx];
 			os << triplet.value << " * x" << triplet.col;
@@ -31,28 +31,33 @@ std::ostream& operator<<(std::ostream& os, const LinearEquation& eq)
 	return os;
 }
 
-void add_equation(
-	LinearEquation* eq, Weight weight, Rhs rhs, std::initializer_list<LinearEquationPair> pairs)
+void add_equation_impl(
+	LinearEquation* eq, Weight weight, Rhs rhs, const LinearEquationPair* pairs, int num_pairs)
 {
 	if (weight.value == 0) { return; }
 
-	// bool all_zero = rhs == 0;
-	bool all_zero = true;
-	int row = eq->rhs.size();
-	for (const auto& pair : pairs) {
-		if (pair.value != 0) {
-			eq->triplets.emplace_back(row, pair.column, pair.value * weight.value);
-			all_zero = false;
-		}
+	int row = eq->b.size();
+	for (int i = 0; i < num_pairs; ++i) {
+		eq->A.emplace_back(row, pairs[i].column, pairs[i].value * weight.value);
 	}
-	if (!all_zero) {
-		eq->rhs.emplace_back(rhs.value * weight.value);
+	eq->b.emplace_back(rhs.value * weight.value);
+
+	for (int ia = 0; ia < num_pairs; ++ia) {
+		const auto& a = pairs[ia];
+		for (int ib = 0; ib < num_pairs; ++ib) {
+			const auto& b = pairs[ib];
+			auto value = weight.value * weight.value * a.value * b.value;
+			eq->AtA.emplace_back(a.column, b.column, value);
+		}
+		CHECK_LT_F(a.column, eq->Atb.size());
+		eq->Atb[a.column] += weight.value * weight.value * a.value * rhs.value;
 	}
 }
 
 // ----------------------------------------------------------------------------
 
 using VectorXr = Eigen::Matrix<float, Eigen::Dynamic, 1>;
+using VectorXd = Eigen::Matrix<double, Eigen::Dynamic, 1>;
 using SparseMatrix = Eigen::SparseMatrix<float>;
 
 SparseMatrix as_sparse_matrix(
@@ -90,6 +95,11 @@ VectorXr as_eigen_vector(const std::vector<float>& values)
 	return Eigen::Map<VectorXr>(const_cast<float*>(values.data()), values.size());
 }
 
+VectorXr as_eigen_vector(const std::vector<double>& values)
+{
+	return Eigen::Map<VectorXd>(const_cast<double*>(values.data()), values.size()).cast<float>();
+}
+
 std::vector<float> as_std_vector(const VectorXr& values)
 {
 	return std::vector<float>(values.data(), values.data() + values.rows() * values.cols());
@@ -107,12 +117,20 @@ SparseMatrix make_square(const SparseMatrix& A)
 std::vector<float> solve_sparse_linear(const LinearEquation& eq, int num_columns)
 {
 	LOG_SCOPE_F(1, "solve_sparse_linear");
-	const SparseMatrix A = as_sparse_matrix(eq.triplets, eq.rhs.size(), num_columns);
-	const SparseMatrix AtA = make_square(A);
-	const VectorXr Atb = A.transpose() * as_eigen_vector(eq.rhs);
+	int AtA_diagonals = 0;
+	for (const auto& triplet : eq.AtA) {
+		AtA_diagonals += triplet.col == triplet.row;
+	}
 
-	LOG_F(1, "A nnz: %lu (%.3f%%)", A.nonZeros(),
-		  100.0f * A.nonZeros() / (A.rows() * A.cols()));
+	LOG_F(1, "num_columns:           %d", eq.num_cols());
+	LOG_F(1, "num_rows:              %d", eq.num_rows());
+	LOG_F(1, "A triplets:            %lu", eq.A.size());
+	LOG_F(1, "AtA triplets:          %lu", eq.AtA.size());
+	LOG_F(1, "AtA diagonal triplets: %d", AtA_diagonals);
+
+	const SparseMatrix AtA = as_sparse_matrix(eq.AtA, eq.Atb.size(), eq.Atb.size());
+	const VectorXr Atb = as_eigen_vector(eq.Atb);
+
 	LOG_F(1, "AtA nnz: %lu (%.3f%%)", AtA.nonZeros(),
 		  100.0f * AtA.nonZeros() / (AtA.rows() * AtA.cols()));
 
@@ -151,9 +169,8 @@ std::vector<float> solve_sparse_linear_with_guess(
 {
 	LOG_SCOPE_F(1, "solve_sparse_linear_with_guess");
 
-	const SparseMatrix A = as_sparse_matrix(eq.triplets, eq.rhs.size(), guess.size());
-	const SparseMatrix AtA = make_square(A);
-	const VectorXr Atb = A.transpose() * as_eigen_vector(eq.rhs);
+	const SparseMatrix AtA = as_sparse_matrix(eq.AtA, eq.Atb.size(), eq.Atb.size());
+	const VectorXr Atb = as_eigen_vector(eq.Atb);
 
 	LOG_SCOPE_F(1, "solveWithGuess");
 	Eigen::BiCGSTAB<SparseMatrix> solver(AtA);
@@ -335,14 +352,8 @@ std::vector<float> solve_tiled_with_guess(
 		return {};
 	}
 
-	const VectorXr b = as_eigen_vector(eq.rhs);
-
-	const SparseMatrix A = as_sparse_matrix(eq.triplets, eq.rhs.size(), num_unknowns);
-	const SparseMatrix AtA = make_square(A);
-	const VectorXr Atb = A.transpose() * b;
-
-	LOG_F(1, "A nnz:   %lu (%.3f%%)", A.nonZeros(),
-		  100.0f * A.nonZeros() / (A.rows() * A.cols()));
+	const SparseMatrix AtA = as_sparse_matrix(eq.AtA, eq.Atb.size(), eq.Atb.size());
+	const VectorXr Atb = as_eigen_vector(eq.Atb);
 
 	LOG_F(1, "AtA nnz: %lu (%.3f%%)", AtA.nonZeros(),
 		  100.0f * AtA.nonZeros() / (AtA.rows() * AtA.cols()));
