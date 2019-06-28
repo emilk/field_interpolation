@@ -18,6 +18,8 @@
 
 #include "gui.hpp"
 
+using namespace emilib;
+
 struct Shape
 {
 	bool   inverted        = false;
@@ -463,8 +465,8 @@ ImGuiWindowFlags fullscreen_window_flags()
 	ImGuiIO& io = ImGui::GetIO();
 	const float width = io.DisplaySize.x;
 	const float height = io.DisplaySize.y;
-	ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiSetCond_Always);
-	ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiSetCond_FirstUseEver);
+	ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+	ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_FirstUseEver);
 	ImGui::SetNextWindowSizeConstraints({width, height}, {width, height});
 	return ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar;
 }
@@ -634,7 +636,7 @@ struct FieldGui
 	void calc()
 	{
 		result = generate(options);
-		const auto image_size = gl::Size{static_cast<unsigned>(options.resolution), static_cast<unsigned>(options.resolution)};
+		const auto image_size = gl::Size{static_cast<int>(options.resolution), static_cast<int>(options.resolution)};
 		sdf_texture.set_data(result.sdf_image.data(),         image_size, gl::ImageFormat::RGBA32);
 		blob_texture.set_data(result.blob_image.data(),       image_size, gl::ImageFormat::RGBA32);
 		heatmap_texture.set_data(result.heatmap_image.data(), image_size, gl::ImageFormat::RGBA32);

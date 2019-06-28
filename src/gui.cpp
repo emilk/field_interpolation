@@ -72,6 +72,8 @@ std::vector<RGBA> generate_heatmap(const std::vector<float>& data, float min, fl
 	return colors;
 }
 
+using namespace emilib;
+
 void show_texture_options(gl::Texture* texture)
 {
 	auto params = texture->params();

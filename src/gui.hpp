@@ -26,4 +26,4 @@ bool show_weights(fi::Weights* weights);
 
 std::vector<RGBA> generate_heatmap(const std::vector<float>& data, float min, float max);
 
-void show_texture_options(gl::Texture* texture);
+void show_texture_options(emilib::gl::Texture* texture);

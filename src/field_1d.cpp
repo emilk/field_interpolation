@@ -136,7 +136,7 @@ void show_1d_field_window_for(Field1DInput* input)
 		draw_list->AddCircleFilled(field_points.back(), 2, ImColor(1.0f, 1.0f, 1.0f, 1.0f));
 	}
 
-	draw_list->AddPolyline(field_points.data(), field_points.size(), ImColor(1.0f, 1.0f, 1.0f, 1.0f), false, 2, true);
+	draw_list->AddPolyline(field_points.data(), field_points.size(), ImColor(1.0f, 1.0f, 1.0f, 1.0f), false, 2);
 
 	for (const auto& point : input->points) {
 		float arrow_len = 16;
