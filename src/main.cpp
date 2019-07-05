@@ -6,6 +6,7 @@
 #include <emilib/imgui_sdl.hpp>
 #include <loguru.hpp>
 
+#include "bipolar_2d.hpp"
 #include "field_1d.hpp"
 #include "gui.hpp"
 #include "interpolate_2d.hpp"
@@ -61,6 +62,11 @@ int main(int argc, char* argv[])
 
 		if (ImGui::Begin("line 2d")) {
 			show_line_2d();
+		}
+		ImGui::End();
+
+		if (ImGui::Begin("Bipolar 2D")) {
+			show_bipolar_2d();
 		}
 		ImGui::End();
 

@@ -18,6 +18,8 @@
 
 #include "gui.hpp"
 
+namespace sdf_field {
+
 using namespace emilib;
 
 struct Shape
@@ -35,8 +37,6 @@ struct Shape
 	float  rotation        =  0;
 };
 
-VISITABLE_STRUCT(Shape, inverted, num_points, lopsidedness, center, radius, circleness, polygon_sides, rotation);
-
 struct NoiseOptions
 {
 	int    seed          = 0;
@@ -44,8 +44,6 @@ struct NoiseOptions
 	float  normal_stddev = 0.05f;
 	size_t outliers      = 0;
 };
-
-VISITABLE_STRUCT(NoiseOptions, seed, pos_stddev, normal_stddev, outliers);
 
 struct Options
 {
@@ -73,7 +71,13 @@ struct Options
 	}
 };
 
-VISITABLE_STRUCT(Options, noise, resolution, shapes, weights, boundary_weight, exact_solve, downscale_factor, cg_from_scratch, solve_options, marching_squares_upsampling);
+} // namespace sdf_field
+
+VISITABLE_STRUCT(sdf_field::Shape, inverted, num_points, lopsidedness, center, radius, circleness, polygon_sides, rotation);
+VISITABLE_STRUCT(sdf_field::NoiseOptions, seed, pos_stddev, normal_stddev, outliers);
+VISITABLE_STRUCT(sdf_field::Options, noise, resolution, shapes, weights, boundary_weight, exact_solve, downscale_factor, cg_from_scratch, solve_options, marching_squares_upsampling);
+
+namespace sdf_field {
 
 struct Result
 {
@@ -469,17 +473,6 @@ bool show_options(Options* options)
 	return changed;
 }
 
-ImGuiWindowFlags fullscreen_window_flags()
-{
-	ImGuiIO& io = ImGui::GetIO();
-	const float width = io.DisplaySize.x;
-	const float height = io.DisplaySize.y;
-	ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
-	ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_FirstUseEver);
-	ImGui::SetNextWindowSizeConstraints({width, height}, {width, height});
-	return ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar;
-}
-
 void show_cells(const Options& options, ImVec2 canvas_pos, ImVec2 canvas_size)
 {
 	ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -753,8 +746,10 @@ void show_sdf_fields_for(FieldGui* field_gui)
 	ImGui::EndChild();
 }
 
+} // namespace sdf_field
+
 void show_sdf_fields()
 {
-	static FieldGui s_field_gui;
-	show_sdf_fields_for(&s_field_gui);
+	static sdf_field::FieldGui s_field_gui;
+	sdf_field::show_sdf_fields_for(&s_field_gui);
 }
