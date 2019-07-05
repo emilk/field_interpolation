@@ -53,7 +53,8 @@ struct Options
 	fi::Weights        weights;
 	float              boundary_weight             =  0.001f;
 	bool               exact_solve                 = true;
-	int                downscale_factor            =  3;
+	int                downscale_factor            =  1;
+	bool               cg_from_scratch             = false;
 	fi::SolveOptions   solve_options;
 	int                marching_squares_upsampling =  1;
 
@@ -70,7 +71,7 @@ struct Options
 	}
 };
 
-VISITABLE_STRUCT(Options, noise, resolution, shapes, weights, boundary_weight, exact_solve, downscale_factor, solve_options, marching_squares_upsampling);
+VISITABLE_STRUCT(Options, noise, resolution, shapes, weights, boundary_weight, exact_solve, downscale_factor, cg_from_scratch, solve_options, marching_squares_upsampling);
 
 struct Result
 {
@@ -241,7 +242,8 @@ fi::LatticeField generate_sdf_field(int width, int height, const Options& option
 	return field;
 }
 
-auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Options& options)
+auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Options& options,
+                  const std::vector<float>& last_solution)
 {
 	LOG_SCOPE_F(1, "generate_sdf");
 	CHECK_EQ_F(positions.size(), normals.size());
@@ -278,8 +280,10 @@ auto generate_sdf(const Vec2List& positions, const Vec2List& normals, const Opti
 			for (auto& value : sdf) {
 				value *= options.downscale_factor;
 			}
-		} else {
+		} else if (options.cg_from_scratch || last_solution.size() != num_unknowns) {
 			sdf = std::vector<float>(num_unknowns, 0.0f);
+		} else {
+			sdf = last_solution;
 		}
 
 		sdf = solve_tiled_with_guess(field.eq, sdf, field.sizes, options.solve_options);
@@ -322,7 +326,7 @@ void perturb_points(Vec2List* positions, Vec2List* normals, const NoiseOptions& 
 	}
 }
 
-Result generate(const Options& options)
+Result generate(const Options& options, const std::vector<float>& last_solution)
 {
 	ERROR_CONTEXT("resolution", options.resolution);
 
@@ -336,7 +340,7 @@ Result generate(const Options& options)
 	}
 	perturb_points(&result.point_positions, &result.point_normals, options.noise);
 
-	std::tie(result.field, result.sdf) = generate_sdf(result.point_positions, result.point_normals, options);
+	std::tie(result.field, result.sdf) = generate_sdf(result.point_positions, result.point_normals, options, last_solution);
 	result.heatmap = generate_error_map(result.field.eq.triplets, result.sdf, result.field.eq.rhs);
 	result.heatmap_image = generate_heatmap(result.heatmap, 0, *max_element(result.heatmap.begin(), result.heatmap.end()));
 	CHECK_EQ_F(result.heatmap_image.size(), resolution * resolution);
@@ -450,6 +454,11 @@ bool show_options(Options* options)
 	changed |= ImGui::Checkbox("Exact solve", &options->exact_solve);
 	if (!options->exact_solve) {
 		changed |= ImGui::SliderInt("downscale_factor", &options->downscale_factor, 1, 10);
+		changed |= ImGui::Checkbox("From scratch", &options->cg_from_scratch);
+		if (!options->cg_from_scratch) {
+			ImGui::SameLine();
+			changed |= ImGui::Button("calc");
+		}
 		changed |= show_solve_options(&options->solve_options);
 	}
 
@@ -633,7 +642,8 @@ struct FieldGui
 
 	void calc()
 	{
-		result = generate(options);
+		const std::vector<float> last_solution = result.sdf;
+		result = generate(options, last_solution);
 		const auto image_size = gl::Size{static_cast<unsigned>(options.resolution), static_cast<unsigned>(options.resolution)};
 		sdf_texture.set_data(result.sdf_image.data(),         image_size, gl::ImageFormat::RGBA32);
 		blob_texture.set_data(result.blob_image.data(),       image_size, gl::ImageFormat::RGBA32);

@@ -55,7 +55,7 @@ std::vector<float> solve_sparse_linear_with_guess(
 
 struct SolveOptions
 {
-	bool  tile             = true;    ///< Break up problem into tiles and solve each tile exactly?
+	bool  tile             = false;    ///< Break up problem into tiles and solve each tile exactly?
 	int   tile_size        = 16;      ///< Side of each tile (tile_size^D unknowns).
 	bool  cg               = true;    ///< Follow tile phase with a CG phase?
 	int   max_iterations   = 0;       ///< Set to zero for default (problem size).
