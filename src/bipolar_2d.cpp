@@ -45,8 +45,8 @@ struct Options
 
 	Options()
 	{
-		int width = 48;
-		int height = 32;
+		int width = 96;
+		int height = 64;
 		in_values = Matrixf(width, height, 0.0);
 		in_weights = Matrixf(width, height, 0.0);
 
@@ -68,9 +68,6 @@ struct Result
 {
 	fi::LinearEquation eq;
 	Matrixf            field;
-	ImageRGBA          in_values_image;  // in_values
-	ImageRGBA          in_weights_image; // in_weights
-	ImageRGBA          field_image;   // output field, colorized
 	std::string        log; // Log captured during solving
 };
 
@@ -133,16 +130,33 @@ void ram_logger(void* user_data, const loguru::Message& msg)
 
 RGBA as_color(float field)
 {
-	if (field == 0.0) {
-		return RGBA{0, 0, 0, 255};
-	} else {
-		const uint8_t c = std::round(remap_clamp(std::fabs(field), 0.0, 2.0, 0.0, 255.0));
-		if (field < 0.0) {
-			return RGBA{0, 0, c, 255};
+	if (std::fabs(field) < 1.0f) {
+		return RGBA{32, 32, 32, 255};
+	};
+	if (field > 0.0f) {
+		if (field >= 2.0f) {
+			return RGBA{255, 0, 0, 255};
 		} else {
-			return RGBA{c, 0, 0, 255};
+			return RGBA{128, 0, 0, 255};
+		}
+	} else {
+		if (std::fabs(field) >= 2.0f) {
+			return RGBA{64, 64, 255, 255};
+		} else {
+			return RGBA{32, 32, 128, 255};
 		}
 	}
+
+	// if (field == 0.0) {
+	// 	return RGBA{0, 0, 0, 255};
+	// } else {
+	// 	const uint8_t c = std::round(remap_clamp(std::fabs(field), 0.0, 2.0, 0.0, 255.0));
+	// 	if (field < 0.0) {
+	// 		return RGBA{0, 0, c, 255};
+	// 	} else {
+	// 		return RGBA{c, 0, 0, 255};
+	// 	}
+	// }
 }
 
 ImageRGBA as_image(const Matrixf& field)
@@ -164,9 +178,6 @@ Result generate(const Options& options, const Matrixf& last_solution)
 	result.eq = generate_equation(options);
 	// result.field = Matrixf(width, height, fi::solve_sparse_linear_fast(result.eq, width * height));
 	result.field = Matrixf(width, height, fi::solve_sparse_linear_exact(result.eq, width * height));
-	result.in_values_image = as_image(options.in_values);
-	result.in_weights_image = as_image(options.in_weights);
-	result.field_image = as_image(result.field);
 
 	loguru::remove_callback("ram_logger");
 	return result;
@@ -184,9 +195,9 @@ bool show_options(Options* options)
 	int w = options->in_values.width();
 	int h = options->in_values.height();
 
-	changed |= ImGui::SliderInt("Width", &w, 16, 64);
+	changed |= ImGui::SliderInt("Width", &w, 16, 128);
 	// ImGui::SameLine();
-	changed |= ImGui::SliderInt("Height", &h, 16, 64);
+	changed |= ImGui::SliderInt("Height", &h, 16, 128);
 
 	options->in_values.resize(w, h);
 	options->in_weights.resize(w, h);
@@ -314,23 +325,38 @@ std::vector<float> iso_surface(int width, int height, const float* values, float
 	return emilib::marching_squares(width, height, recentered.data());
 }
 
+void set_texture(gl::Texture* tex, const ImageRGBA& image)
+{
+	const auto image_size = gl::Size{image.width(), image.height()};
+	tex->set_data(image.data(), image_size, gl::ImageFormat::RGBA32);
+}
+
+void save_tga(const char* path, const ImageRGBA& image)
+{
+	const bool alpha = false;
+	CHECK_F(emilib::write_tga(path, image.width(), image.height(), image.data(), alpha));
+}
+
 struct FieldGui
 {
 	Options     options;
 	Result      result;
+	ImageRGBA   in_values_image;
+	ImageRGBA   in_weights_image;
+	ImageRGBA   field_image;
 	gl::Texture in_values_texture{ "values",  gl::TexParams::clamped_nearest()};
 	gl::Texture in_weights_texture{"weights", gl::TexParams::clamped_nearest()};
-	gl::Texture field_texture{  "field",   gl::TexParams::clamped_nearest()};
-	bool        draw_cells                  = true;
-	bool        draw_iso_lines              = true;
-	bool        draw_normals                = false;
-	int         marching_squares_upsampling = 1;
-	float       iso_spacing                 = 1;
+	gl::Texture field_texture{     "field",   gl::TexParams::clamped_nearest()};
+	bool        draw_cells       = true;
+	bool        draw_iso_lines   = true;
+	bool        draw_normals     = false;
+	int         field_upsampling = 4;
+	float       iso_spacing      = 1;
 
 	FieldGui()
 	{
-		if (fs::file_exists("in_weights_nput.json")) {
-			const auto config = configuru::parse_file("sdf_input.json", configuru::JSON);
+		if (fs::file_exists("bipolar_2d.json")) {
+			const auto config = configuru::parse_file("bipolar_2d.json", configuru::JSON);
 			configuru::deserialize(&options, config, log_errors);
 		}
 		calc();
@@ -339,10 +365,16 @@ struct FieldGui
 	void calc()
 	{
 		result = generate(options, result.field);
-		const auto image_size = gl::Size{static_cast<int>(result.field.width()), static_cast<int>(result.field.height())};
-		in_values_texture.set_data(result.in_values_image.data(),   image_size, gl::ImageFormat::RGBA32);
-		in_weights_texture.set_data(result.in_weights_image.data(), image_size, gl::ImageFormat::RGBA32);
-		field_texture.set_data(result.field_image.data(),           image_size, gl::ImageFormat::RGBA32);
+
+		in_values_image = as_image(options.in_values);
+		in_weights_image = as_image(options.in_weights);
+
+		const auto highres_field = wrapping_bicubic_upsample(result.field, field_upsampling);
+		field_image = as_image(highres_field);
+
+		set_texture(&in_values_texture, in_values_image);
+		set_texture(&in_weights_texture, in_weights_image);
+		set_texture(&field_texture, field_image);
 	}
 
 	void show_input()
@@ -354,8 +386,24 @@ struct FieldGui
 		}
 	}
 
+	void paint_iso_lines(const ImVec2& canvas_pos, const ImVec2& canvas_size) const
+	{
+		const float field_min = *std::min_element(result.field.begin(), result.field.end());
+		const float field_max = *std::max_element(result.field.begin(), result.field.end());
+
+		const Matrixf& iso_source = result.field;
+		for (int i = emath::floor_to_int(field_min / iso_spacing); i <= emath::ceil_to_int(field_max / iso_spacing); ++i) {
+			if (i == 0) { continue; }
+			auto iso_lines = iso_surface(iso_source.width(), iso_source.height(), iso_source.data(), i * iso_spacing);
+			int color = std::abs(i) == 1 ? ImColor(1.0f, 1.0f, 1.0f, 1.0f) : ImColor(0.5f, 0.5f, 0.5f, 0.5f);
+			paint_outline(iso_source.width(), iso_source.height(), iso_lines, canvas_pos, canvas_size, color, i == 0 && draw_normals);
+		}
+	}
+
 	void show_result()
 	{
+		bool changed = false;
+
 		const float field_min = *std::min_element(result.field.begin(), result.field.end());
 		const float field_max = *std::max_element(result.field.begin(), result.field.end());
 
@@ -371,7 +419,7 @@ struct FieldGui
 		ImGui::Checkbox("Paint iso lines", &draw_iso_lines);
 		if (draw_iso_lines) {
 			ImGui::SameLine();
-			ImGui::SliderInt("marching_squares_upsampling", &marching_squares_upsampling, 1, 10);
+			changed |= ImGui::SliderInt("field_upsampling", &field_upsampling, 1, 10);
 			ImGui::SameLine();
 			ImGui::Checkbox("Paint normals", &draw_normals);
 			ImGui::SameLine();
@@ -379,44 +427,81 @@ struct FieldGui
 			ImGui::SliderFloat("Iso spacing", &iso_spacing, 1, 10, "%.0f");
 		}
 
+		ImGui::Separator();
+
+		in_values_texture.set_params(field_texture.params());
+		in_weights_texture.set_params(field_texture.params());
+		field_texture.bind(); in_values_texture.bind(); in_weights_texture.bind(); // HACK to apply the params
+
 		const ImVec2 available = ImGui::GetContentRegionAvail();
 		const float canvas_width = std::floor(std::min(available.x / 2, (available.y - 64) / 2));
 		const float canvas_height = canvas_width * h / w;
 		const ImVec2 canvas_size{canvas_width, canvas_height};
-		const ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
-		ImGui::InvisibleButton("canvas", canvas_size);
-		if (draw_cells) { paint_grid_centers(options, canvas_pos, canvas_size); }
-		if (draw_iso_lines) {
-			const Matrixf iso_source = wrapping_bicubic_upsample(result.field, marching_squares_upsampling);
-			for (int i = emath::floor_to_int(field_min / iso_spacing); i <= emath::ceil_to_int(field_max / iso_spacing); ++i) {
-				auto iso_lines = iso_surface(iso_source.width(), iso_source.height(), iso_source.data(), i * iso_spacing);
-				int color = i == 0 ? ImColor(1.0f, 1.0f, 1.0f, 1.0f) : ImColor(0.5f, 0.5f, 0.5f, 0.5f);
-				paint_outline(iso_source.width(), iso_source.height(), iso_lines, canvas_pos, canvas_size, color, i == 0 && draw_normals);
+
+		ImGui::Columns(2, "mycolumns");
+		ImGui::Text("Output:");
+
+		{
+			const ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
+			ImGui::InvisibleButton("canvas", canvas_size);
+			if (draw_cells) { paint_grid_centers(options, canvas_pos, canvas_size); }
+			if (draw_iso_lines) { paint_iso_lines(canvas_pos, canvas_size); }
+		}
+		ImGui::NextColumn();
+
+		ImGui::Text("in_weights:");
+		ImGui::Image(reinterpret_cast<ImTextureID>(in_weights_texture.id()), canvas_size);
+		ImGui::NextColumn();
+
+		{
+			ImGui::Text("field_texture:");
+			const ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
+			ImGui::Image(reinterpret_cast<ImTextureID>(field_texture.id()), canvas_size);
+			if (draw_iso_lines) { paint_iso_lines(canvas_pos, canvas_size); }
+			ImGui::SetCursorScreenPos(canvas_pos);
+			ImGui::InvisibleButton("field_texture_button", canvas_size);
+			if (ImGui::IsItemHovered()) {
+				const auto pos = ImGui::GetMousePos();
+				const int xi = std::round(remap_clamp(pos.x, canvas_pos.x, canvas_pos.x + canvas_size.x, 0.5f, w - 0.5f));
+				const int yi = std::round(remap_clamp(pos.y, canvas_pos.y, canvas_pos.y + canvas_size.y, 0.5f, h - 0.5f));
+
+				if (options.in_values.contains_coord(xi, yi)) {
+					if (ImGui::IsMouseDown(0)) {
+						options.in_values(xi, yi) = +2.0f;
+						options.in_weights(xi, yi) = 1.0f;
+						changed = true;
+					} else if (ImGui::IsMouseDown(1)) {
+						options.in_values(xi, yi) = -2.0f;
+						options.in_weights(xi, yi) = 1.0f;
+						changed = true;
+					} else if (ImGui::IsMouseDown(2)) {
+						options.in_values(xi, yi) = 0.0f;
+						options.in_weights(xi, yi) = 0.0f;
+						changed = true;
+					}
+				}
 			}
 		}
+		ImGui::NextColumn();
 
-		in_values_texture.set_params(field_texture.params());
-		in_weights_texture.set_params(field_texture.params());
-
-		// HACK to apply the params:
-		field_texture.bind(); in_values_texture.bind(); in_weights_texture.bind();
-
-		ImGui::SameLine();
-		ImGui::Image(reinterpret_cast<ImTextureID>(in_weights_texture.id()), canvas_size);
-
-		ImGui::Image(reinterpret_cast<ImTextureID>(field_texture.id()), canvas_size);
-		ImGui::SameLine();
+		ImGui::Text("in_values:");
 		ImGui::Image(reinterpret_cast<ImTextureID>(in_values_texture.id()), canvas_size);
+		ImGui::NextColumn();
 
+		ImGui::Columns(1);
+		ImGui::Separator();
 		ImGui::Text("Field min: %f, max: %f", field_min, field_max);
 
 		show_texture_options(&field_texture);
 		ImGui::SameLine();
 		if (ImGui::Button("Save images")) {
-			const bool alpha = false;
-			CHECK_F(emilib::write_tga("in_values.tga",  w, h, result.in_values_image.data(),  alpha));
-			CHECK_F(emilib::write_tga("in_weights.tga", w, h, result.in_weights_image.data(), alpha));
-			CHECK_F(emilib::write_tga("out_field.tga",  w, h, result.field_image.data(),      alpha));
+			save_tga("in_values.tga",  in_values_image);
+			save_tga("in_weights.tga", in_weights_image);
+			save_tga("out_field.tga",  field_image);
+		}
+
+		if (changed) {
+			calc();
 		}
 	}
 };
