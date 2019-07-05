@@ -583,7 +583,7 @@ std::vector<float> bicubic_upsample(int* io_width, int* io_height, const float* 
 			int sx = lx / upsample;
 			int sy = ly / upsample;
 
-			float values[4][4] {
+			float local[4][4] {
 				{ value_at(sx - 1, sy - 1), value_at(sx + 0, sy - 1), value_at(sx + 1, sy - 1), value_at(sx + 2, sy - 1) },
 				{ value_at(sx - 1, sy + 0), value_at(sx + 0, sy + 0), value_at(sx + 1, sy + 0), value_at(sx + 2, sy + 0) },
 				{ value_at(sx - 1, sy + 1), value_at(sx + 0, sy + 1), value_at(sx + 1, sy + 1), value_at(sx + 2, sy + 1) },
@@ -592,10 +592,10 @@ std::vector<float> bicubic_upsample(int* io_width, int* io_height, const float* 
 
 			large.push_back(
 				emath::catmull_rom(ty,
-					emath::catmull_rom(tx, values[0][0], values[0][1], values[0][2], values[0][3]),
-					emath::catmull_rom(tx, values[1][0], values[1][1], values[1][2], values[1][3]),
-					emath::catmull_rom(tx, values[2][0], values[2][1], values[2][2], values[2][3]),
-					emath::catmull_rom(tx, values[3][0], values[3][1], values[3][2], values[3][3])
+					emath::catmull_rom(tx, local[0][0], local[0][1], local[0][2], local[0][3]),
+					emath::catmull_rom(tx, local[1][0], local[1][1], local[1][2], local[1][3]),
+					emath::catmull_rom(tx, local[2][0], local[2][1], local[2][2], local[2][3]),
+					emath::catmull_rom(tx, local[3][0], local[3][1], local[3][2], local[3][3])
 				)
 			);
 		}

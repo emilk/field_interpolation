@@ -9,9 +9,44 @@ fi
 mkdir -p build
 
 CXX="ccache g++"
-CPPFLAGS="--std=c++14 -Wall -Wpedantic -g"
-CPPFLAGS="$CPPFLAGS -Werror"
+# CPPFLAGS="--std=c++14"
+CPPFLAGS="--std=c++1z" # C++17
+
+CPPFLAGS="$CPPFLAGS -Werror -Wall -Wpedantic -Wextra -Weverything -Wunreachable-code"
+
+CPPFLAGS="$CPPFLAGS -Wno-double-promotion" # Implicitly converting a float to a double is fine
+CPPFLAGS="$CPPFLAGS -Wno-float-equal"
+CPPFLAGS="$CPPFLAGS -Wno-shorten-64-to-32"
 CPPFLAGS="$CPPFLAGS -Wno-sign-compare"
+CPPFLAGS="$CPPFLAGS -Wno-sign-conversion"
+
+CPPFLAGS="$CPPFLAGS -Wno-conversion" # FIXME: implicit double->float
+CPPFLAGS="$CPPFLAGS -Wno-float-conversion" # FIXME: implicit double->float
+
+# Turn off some warning that -Weverything turns on:
+CPPFLAGS="$CPPFLAGS -Wno-c++98-compat"
+CPPFLAGS="$CPPFLAGS -Wno-c++98-compat-pedantic"
+# CPPFLAGS="$CPPFLAGS -Wno-covered-switch-default"
+CPPFLAGS="$CPPFLAGS -Wno-disabled-macro-expansion"
+CPPFLAGS="$CPPFLAGS -Wno-documentation"
+CPPFLAGS="$CPPFLAGS -Wno-documentation-unknown-command"
+CPPFLAGS="$CPPFLAGS -Wno-exit-time-destructors"
+# CPPFLAGS="$CPPFLAGS -Wno-global-constructors"
+# CPPFLAGS="$CPPFLAGS -Wno-missing-noreturn"
+CPPFLAGS="$CPPFLAGS -Wno-missing-prototypes"
+CPPFLAGS="$CPPFLAGS -Wno-padded"
+CPPFLAGS="$CPPFLAGS -Wno-reserved-id-macro"
+CPPFLAGS="$CPPFLAGS -Wno-unused-macros"
+
+CPPFLAGS="$CPPFLAGS -Wno-old-style-cast" # It is just so convenient
+
+# TEMPORARY DURING DEV:
+CPPFLAGS="$CPPFLAGS -Wno-unused-function"
+CPPFLAGS="$CPPFLAGS -Wno-unused-parameter"
+CPPFLAGS="$CPPFLAGS -Wno-unused-variable"
+
+# HACK for SDL (why is this needed???)
+CPPFLAGS="$CPPFLAGS -Wno-implicit-fallthrough"
 
 # Check if clang:ret=0
 ret=0
