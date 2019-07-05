@@ -98,7 +98,7 @@ void show_1d_denoiser_window()
 		gt_points.push_back(canvas_from_field(point.x, point.y));
 	}
 
-	draw_list->AddPolyline(gt_points.data(), gt_points.size(), ImColor(1.0f, 0.0f, 0.0f, 0.5f), false, 2, true);
+	draw_list->AddPolyline(gt_points.data(), gt_points.size(), ImColor(1.0f, 0.0f, 0.0f, 0.5f), false, 2);
 
 	Vec2List solution_points;
 	for (auto i : emilib::irange(num_unknowns)) {
@@ -106,5 +106,5 @@ void show_1d_denoiser_window()
 		solution_points.push_back(canvas_from_field(t, solution[i]));
 	}
 
-	draw_list->AddPolyline(solution_points.data(), solution_points.size(), ImColor(1.0f, 1.0f, 1.0f, 1.0f), false, 2, true);
+	draw_list->AddPolyline(solution_points.data(), solution_points.size(), ImColor(1.0f, 1.0f, 1.0f, 1.0f), false, 2);
 }

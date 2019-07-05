@@ -23,7 +23,7 @@ int main(int argc, char* argv[])
 	sdl_params.height_points = 1200;
 	auto sdl = emilib::sdl::init(sdl_params);
 	emilib::ImGui_SDL imgui_sdl(sdl.width_points, sdl.height_points, sdl.pixels_per_point);
-	gl::bind_imgui_painting();
+	emilib::gl::bind_imgui_painting();
 
 	bool quit = false;
 	while (!quit) {
@@ -32,7 +32,7 @@ int main(int argc, char* argv[])
 			if (event.type == SDL_QUIT) { quit = true; }
 			imgui_sdl.on_event(event);
 		}
-		gl::TempViewPort::set_back_buffer_size(
+		emilib::gl::TempViewPort::set_back_buffer_size(
 			emath::round_to_int(imgui_sdl.width_pixels()),
 			emath::round_to_int(imgui_sdl.height_pixels()));
 		imgui_sdl.new_frame();
@@ -68,6 +68,7 @@ int main(int argc, char* argv[])
 		glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
 		imgui_sdl.paint();
+		emilib::gl::paint_imgui();
 
 		SDL_GL_SwapWindow(sdl.window);
 	}

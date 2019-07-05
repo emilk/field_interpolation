@@ -48,6 +48,11 @@ CPPFLAGS="$CPPFLAGS -Wno-unused-variable"
 # HACK for SDL (why is this needed???)
 CPPFLAGS="$CPPFLAGS -Wno-implicit-fallthrough"
 
+# TEMPORARY DURING DEV:
+CPPFLAGS="$CPPFLAGS -Wno-unused-function"
+CPPFLAGS="$CPPFLAGS -Wno-unused-parameter"
+CPPFLAGS="$CPPFLAGS -Wno-unused-variable"
+
 # Check if clang:ret=0
 ret=0
 $CXX --version 2>/dev/null | grep clang > /dev/null || ret=$?
@@ -61,6 +66,8 @@ else
 fi
 
 CPPFLAGS="$CPPFLAGS -O2 -DNDEBUG"
+
+CPPFLAGS="$CPPFLAGS -DIMGUI_DISABLE_OSX_FUNCTIONS" # TODO ?
 
 COMPILE_FLAGS="$CPPFLAGS"
 COMPILE_FLAGS="$COMPILE_FLAGS -I ."

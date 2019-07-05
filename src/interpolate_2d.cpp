@@ -9,6 +9,8 @@
 
 #include "gui.hpp"
 
+using namespace emilib;
+
 void show_2d_field_window()
 {
 	// Based on https://en.wikipedia.org/wiki/Multivariate_interpolation
@@ -49,7 +51,7 @@ void show_2d_field_window()
 	}
 
 	const auto heatmap = generate_heatmap(interpolated, 0, 6);
-	const auto image_size = gl::Size{static_cast<unsigned>(s_resolution), static_cast<unsigned>(s_resolution)};
+	const auto image_size = gl::Size{s_resolution, s_resolution};
 	s_texture.set_data(heatmap.data(), image_size, gl::ImageFormat::RGBA32);
 
 	ImVec2 canvas_size{384, 384};
