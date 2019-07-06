@@ -20,6 +20,8 @@ using Vec2List = std::vector<ImVec2>;
 struct RGBA
 {
 	uint8_t r, g, b, a;
+
+	operator ImColor() const { return ImColor(r,g,b,a); }
 };
 
 bool show_weights(fi::Weights* weights);
