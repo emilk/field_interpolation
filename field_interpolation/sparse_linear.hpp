@@ -53,6 +53,16 @@ std::vector<float> solve_sparse_linear_with_guess(
 	int                       max_iterations,   ///< Set to zero for default (problem size).
 	float                     error_tolerance); ///< Set to zero for default (float epsilon).
 
+/// Least square solving for x in Ax = rhs using Jacobi iterations.
+/// `guess` is a starting guess for x.
+/// weight: how fast to converge. 0.5 is steady, 1.0 can be unstable. 2.0 / 3.0 is good for fast convergence.
+/// Slower, but steadier, convergence compared to solve_sparse_linear_with_guess.
+std::vector<float> jacobi_iterations(
+	const LinearEquation&     eq,
+	const std::vector<float>& guess,
+	const int                 num_iterations,
+	const float               weight);
+
 struct SolveOptions
 {
 	bool  tile             = false;    ///< Break up problem into tiles and solve each tile exactly?

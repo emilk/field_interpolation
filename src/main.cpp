@@ -37,7 +37,7 @@ int main(int argc, char* argv[])
 
 	float sleep_sec_smoothed = 0.0f;
 	float engine_dt_smoothed = 1.0f / 60.0f;
-	const float SMOOTHING = 0.02f;
+	const float SMOOTHING = 0.1f;
 
 	bool quit = false;
 	while (!quit) {
@@ -66,7 +66,7 @@ int main(int argc, char* argv[])
 			ImGui::EndMainMenuBar();
 		}
 
-		ImGui::ShowTestWindow();
+		ImGui::ShowDemoWindow();
 
 		if (ImGui::Begin("1D field interpolation")) {
 			show_1d_field_window();

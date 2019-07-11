@@ -32,6 +32,11 @@ using namespace emilib;
 using Matrixf = Matrix<float>;
 using ImageRGBA = Matrix<RGBA>;
 
+const float TOWER_HEIGHT = 4.0f;
+const float TOWER_WEIGHT = 1.0f;
+const float FIRST_ISO = 1.0f;
+const float SECOND_ISO = 3.0f;
+
 struct Options
 {
 	// Input equation: the cell at position X pulls towards in_values[X] with the force in_weights[X]
@@ -39,37 +44,39 @@ struct Options
 	Matrixf in_weights;
 
 	// Prior for C1 smoothness constraint, i.e.  f[x-1] - 2 * f[x] + f[x+1] = 0
-	float   smoothness                  = 1.0f;
+	float   smoothness     = 1.0f;
 
 	// How strongly each cell pulls towards zero (for X where in_weights[X] == 0).
-	float   regularization              = 1e-3f;
+	float   regularization = 1e-2f;
 
 	// If false, constraints only act to repel from zero
-	bool bilateral = false;
+	bool    bilateral      = false;
 
 	// Torus world?
-	bool wrapping = true;
+	bool    wrapping       = true;
 
-	int cg_iterations = 5;
+	bool    cg = false;
+	int     solve_iterations  = 100;
+	float   jacobi_weight = 0.5f;
 
 	Options()
 	{
-		int width = 96;
-		int height = 64;
+		int width = 128;
+		int height = 96;
 		in_values = Matrixf(width, height, 0.0);
 		in_weights = Matrixf(width, height, 0.0);
 
 		// Set two values:
-		in_values(width  * 1 / 3, height / 2) = +2.0;
-		in_weights(width * 1 / 3, height / 2) =  1.0;
-		in_values(width  * 2 / 3, height / 2) = -2.0;
-		in_weights(width * 2 / 3, height / 2) =  1.0;
+		in_values(width  * 1 / 3, height / 2) = +TOWER_HEIGHT;
+		in_weights(width * 1 / 3, height / 2) =  TOWER_WEIGHT;
+		in_values(width  * 2 / 3, height / 2) = -TOWER_HEIGHT;
+		in_weights(width * 2 / 3, height / 2) =  TOWER_WEIGHT;
 	}
 };
 
 } // namespace bipolar_2d
 
-VISITABLE_STRUCT(bipolar_2d::Options, in_values, in_weights, smoothness, regularization, bilateral, wrapping, cg_iterations);
+VISITABLE_STRUCT(bipolar_2d::Options, in_values, in_weights, smoothness, regularization, bilateral, wrapping, cg, solve_iterations, jacobi_weight);
 
 namespace bipolar_2d {
 
@@ -143,6 +150,8 @@ fi::LinearEquation generate_equation(const Options& options, const Matrixf& last
 		}
 	}
 
+	// TODO: add self-sustaining weights (blue area wants to stay blue)
+
 	return eq;
 }
 
@@ -154,17 +163,17 @@ void ram_logger(void* user_data, const loguru::Message& msg)
 
 RGBA as_color(float field)
 {
-	if (std::fabs(field) < 1.0f) {
+	if (std::fabs(field) < FIRST_ISO) {
 		return RGBA{32, 32, 32, 255};
 	};
 	if (field > 0.0f) {
-		if (field >= 2.0f) {
+		if (field >= SECOND_ISO) {
 			return RGBA{255, 0, 0, 255};
 		} else {
 			return RGBA{128, 0, 0, 255};
 		}
 	} else {
-		if (std::fabs(field) >= 2.0f) {
+		if (std::fabs(field) >= SECOND_ISO) {
 			return RGBA{64, 64, 255, 255};
 		} else {
 			return RGBA{32, 32, 128, 255};
@@ -198,7 +207,11 @@ Result generate(const Options& options, Matrixf last_solution)
 		result.field = Matrixf(width, height, fi::solve_sparse_linear_exact(result.eq, width * height));
 	} else {
 		// result.field = Matrixf(width, height, fi::solve_sparse_linear_fast(result.eq, width * height));
-		result.field = Matrixf(width, height, fi::solve_sparse_linear_with_guess(result.eq, last_solution.as_vec(), options.cg_iterations, 0.0f));
+		if (options.cg) {
+			result.field = Matrixf(width, height, fi::solve_sparse_linear_with_guess(result.eq, last_solution.as_vec(), options.solve_iterations, 0.0f));
+		} else {
+			result.field = Matrixf(width, height, fi::jacobi_iterations(result.eq, last_solution.as_vec(), options.solve_iterations, options.jacobi_weight));
+		}
 	}
 
 	loguru::remove_callback("ram_logger");
@@ -212,9 +225,9 @@ bool show_options(Options* options)
 	int w = options->in_values.width();
 	int h = options->in_values.height();
 
-	changed |= ImGui::SliderInt("Width", &w, 16, 128);
+	changed |= ImGui::SliderInt("Width", &w, 16, 256);
 	// ImGui::SameLine();
-	changed |= ImGui::SliderInt("Height", &h, 16, 128);
+	changed |= ImGui::SliderInt("Height", &h, 16, 256);
 
 	options->in_values.resize(w, h);
 	options->in_weights.resize(w, h);
@@ -223,7 +236,11 @@ bool show_options(Options* options)
 	changed |= ImGui::SliderFloat("regularization", &options->regularization, 0.0f,  1.0f, "%.3f", 4);
 	changed |= ImGui::Checkbox("bilateral", &options->bilateral);
 	changed |= ImGui::Checkbox("wrapping", &options->wrapping);
-	changed |= ImGui::SliderInt("cg_iterations", &options->cg_iterations, 1,  50);
+	changed |= ImGui::Checkbox("CG solver", &options->cg);
+	changed |= ImGui::SliderInt("solve_iterations", &options->solve_iterations, 1, 500);
+	if (!options->cg) {
+		changed |= ImGui::SliderFloat("Jacobi weight", &options->jacobi_weight, 0.0f, 1.0f);
+	}
 
 	return changed;
 }
@@ -372,13 +389,14 @@ struct FieldGui
 {
 	Options     options;
 	Result      result;
+	Matrixf     highres_field;
 	ImageRGBA   in_values_image;
 	ImageRGBA   in_weights_image;
 	ImageRGBA   field_image;
 	gl::Texture in_values_texture{ "values",  gl::TexParams::clamped_linear()};
 	gl::Texture in_weights_texture{"weights", gl::TexParams::clamped_linear()};
 	gl::Texture field_texture{     "field",   gl::TexParams::clamped_linear()};
-	bool        draw_cells       = true;
+	bool        show_towers      = false;
 	int         field_upsampling = 4;
 
 	FieldGui()
@@ -403,7 +421,7 @@ struct FieldGui
 		in_values_image = as_image(options.in_values);
 		in_weights_image = as_image(options.in_weights);
 
-		const auto highres_field = wrapping_bicubic_upsample(result.field, field_upsampling);
+		highres_field = wrapping_bicubic_upsample(result.field, field_upsampling);
 		field_image = as_image(highres_field);
 
 		set_texture(&in_values_texture, in_values_image);
@@ -425,7 +443,7 @@ struct FieldGui
 
 	void paint_iso_line(const ImVec2& canvas_pos, const ImVec2& canvas_size, float iso_value, ImColor color) const
 	{
-		const Matrixf& source = result.field;
+		const Matrixf& source = highres_field;
 		auto iso_lines = iso_surface(source.width(), source.height(), source.data(), iso_value);
 		paint_outline(source.width(), source.height(), iso_lines, canvas_pos, canvas_size, color, false);
 	}
@@ -434,10 +452,10 @@ struct FieldGui
 	{
 		const auto full_color = ImColor(1.0f, 1.0f, 1.0f, 1.0f);
 		const auto half_color = ImColor(5.0f, 5.0f, 5.0f, 1.0f);
-		paint_iso_line(canvas_pos, canvas_size, -1.0f, full_color);
-		paint_iso_line(canvas_pos, canvas_size, +1.0f, full_color);
-		paint_iso_line(canvas_pos, canvas_size, -2.0f, half_color);
-		paint_iso_line(canvas_pos, canvas_size, +2.0f, half_color);
+		paint_iso_line(canvas_pos, canvas_size, -FIRST_ISO, full_color);
+		paint_iso_line(canvas_pos, canvas_size, +FIRST_ISO, full_color);
+		paint_iso_line(canvas_pos, canvas_size, -SECOND_ISO, half_color);
+		paint_iso_line(canvas_pos, canvas_size, +SECOND_ISO, half_color);
 	}
 
 	void paint_towers(const AABB2f& out_rect) const
@@ -477,9 +495,21 @@ struct FieldGui
 		ImGui::Text("%lu non-zero values in matrix", result.eq.triplets.size());
 		ImGui::Text("Log:\n%s", result.log.c_str());
 
-		ImGui::Checkbox("Input cells", &draw_cells);
+		ImGui::Checkbox("Towers", &show_towers);
 		ImGui::SameLine();
 		ImGui::SliderInt("field_upsampling", &field_upsampling, 1, 10);
+		ImGui::Separator();
+
+		ImGui::Text("Field min: %f, max: %f", field_min, field_max);
+
+		show_texture_options(&field_texture);
+		ImGui::SameLine();
+		if (ImGui::Button("Save images")) {
+			save_tga("in_values.tga",  in_values_image);
+			save_tga("in_weights.tga", in_weights_image);
+			save_tga("out_field.tga",  field_image);
+		}
+
 		ImGui::Separator();
 
 		in_values_texture.set_params(field_texture.params());
@@ -487,9 +517,8 @@ struct FieldGui
 		field_texture.bind(); in_values_texture.bind(); in_weights_texture.bind(); // HACK to apply the params
 
 		const ImVec2 available = ImGui::GetContentRegionAvail();
-		const float canvas_width = std::floor(std::min(available.x, (available.y - 128)));
-		const float canvas_height = canvas_width * h / w;
-		const ImVec2 canvas_size{canvas_width, canvas_height};
+		const auto canvas_size = imgui_helpers::aspect_correct_image_size(
+			ImVec2(w, h), available, ImVec2(128, 128));
 
 		{
 			ImGui::Text("field_texture:");
@@ -497,7 +526,9 @@ struct FieldGui
 			const auto out_rect = AABB2f::from_min_size(canvas_pos, canvas_size);
 			ImGui::Image(reinterpret_cast<ImTextureID>(field_texture.id()), canvas_size);
 			paint_iso_lines(canvas_pos, canvas_size);
-			paint_towers(out_rect);
+			if (show_towers) {
+				paint_towers(out_rect);
+			}
 			ImGui::SetCursorScreenPos(canvas_pos);
 			ImGui::InvisibleButton("field_texture_button", canvas_size);
 			if (ImGui::IsItemHovered()) {
@@ -507,28 +538,17 @@ struct FieldGui
 
 				if (options.in_values.contains_coord(xi, yi)) {
 					if (ImGui::IsMouseDown(0)) {
-						options.in_values(xi, yi) = +2.0f;
-						options.in_weights(xi, yi) = 1.0f;
+						options.in_values(xi, yi) = +TOWER_HEIGHT;
+						options.in_weights(xi, yi) = TOWER_WEIGHT;
 					} else if (ImGui::IsMouseDown(1)) {
-						options.in_values(xi, yi) = -2.0f;
-						options.in_weights(xi, yi) = 1.0f;
+						options.in_values(xi, yi) = -TOWER_HEIGHT;
+						options.in_weights(xi, yi) = TOWER_WEIGHT;
 					} else if (ImGui::IsMouseDown(2)) {
 						options.in_values(xi, yi) = 0.0f;
 						options.in_weights(xi, yi) = 0.0f;
 					}
 				}
 			}
-		}
-
-		ImGui::Separator();
-		ImGui::Text("Field min: %f, max: %f", field_min, field_max);
-
-		show_texture_options(&field_texture);
-		ImGui::SameLine();
-		if (ImGui::Button("Save images")) {
-			save_tga("in_values.tga",  in_values_image);
-			save_tga("in_weights.tga", in_weights_image);
-			save_tga("out_field.tga",  field_image);
 		}
 	}
 };

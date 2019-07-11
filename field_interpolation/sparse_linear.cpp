@@ -212,6 +212,35 @@ std::vector<float> solve_sparse_linear_with_guess(
 	return as_std_vector(solution);
 }
 
+std::vector<float> jacobi_iterations(
+	const LinearEquation&     eq,
+	const std::vector<float>& guess,
+	const int                 num_iterations,
+	const float               weight)
+{
+	if (num_iterations <= 0) { return guess; }
+	LOG_SCOPE_F(1, "jacobi_iterations");
+
+	const SparseMatrixf A = as_sparse_matrix_float(eq.triplets, eq.rhs.size(), guess.size());
+	const SparseMatrixf AtA = make_square(A);
+	const VectorXf Atb = A.transpose() * as_eigen_vector(eq.rhs);
+
+	const VectorXf D = AtA.diagonal();
+
+	SparseMatrixf R = AtA;
+	R.diagonal() = VectorXf::Zero(D.rows());
+	R.makeCompressed();
+
+	VectorXf x = as_eigen_vector(guess);
+	for (int i = 0; i < num_iterations; ++i) {
+		VectorXf temp = Atb - R * x;
+		for (int j = 0; j < guess.size(); ++j) {
+			x[j] = weight * temp[j] / D[j] + (1.0f - weight) * x[j];
+		}
+	}
+	return as_std_vector(x);
+}
+
 /// Break the lattice into tiles, each tile_size^D big.
 /// Each tile is solved separately, and the results are combined.
 /// The produces a result where the high frequency components are very accurate.
