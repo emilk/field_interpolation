@@ -36,9 +36,8 @@ void add_equation(
 {
 	if (weight.value == 0) { return; }
 
-	// bool all_zero = rhs == 0;
+	const int row = eq->rhs.size();
 	bool all_zero = true;
-	int row = eq->rhs.size();
 	for (const auto& pair : pairs) {
 		if (pair.value != 0) {
 			eq->triplets.emplace_back(row, pair.column, pair.value * weight.value);
