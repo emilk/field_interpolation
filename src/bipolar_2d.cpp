@@ -44,25 +44,27 @@ struct Options
 	Matrixf in_weights;
 
 	// Prior for C1 smoothness constraint, i.e.  f[x-1] - 2 * f[x] + f[x+1] = 0
-	float   smoothness     = 1.0f;
+	float   smoothness              =   1.0f;
 
 	// How strongly each cell pulls towards zero (for X where in_weights[X] == 0).
-	float   regularization = 1e-2f;
+	float   regularization          =   1e-2f;
 
 	// If false, constraints only act to repel from zero
-	bool    bilateral      = false;
+	bool    bilateral               = false;
 
 	// Torus world?
-	bool    wrapping       = true;
+	bool    wrapping                = true;
 
-	bool    cg = false;
-	int     solve_iterations  = 100;
-	float   jacobi_weight = 0.5f;
+	int     max_mip_levels          =   1;
+	float   mip_connection_strength =   1.0f;
+	bool    cg                      = false;
+	int     solve_iterations        = 100;
+	float   jacobi_weight           =   0.5f;
 
 	Options()
 	{
 		int width = 128;
-		int height = 96;
+		int height = 128;
 		in_values = Matrixf(width, height, 0.0);
 		in_weights = Matrixf(width, height, 0.0);
 
@@ -76,15 +78,95 @@ struct Options
 
 } // namespace bipolar_2d
 
-VISITABLE_STRUCT(bipolar_2d::Options, in_values, in_weights, smoothness, regularization, bilateral, wrapping, cg, solve_iterations, jacobi_weight);
+VISITABLE_STRUCT(bipolar_2d::Options, in_values, in_weights, smoothness, regularization, bilateral, wrapping, max_mip_levels, cg, solve_iterations, jacobi_weight);
 
 namespace bipolar_2d {
+
+struct MipIndex
+{
+	/// Size of each layer (0 = base = largest)
+	std::vector<Vec2i> sizes;
+	/// Index offset of each layer (sum of the areas of previous layers)
+	std::vector<int> offsets;
+
+	MipIndex() {}
+
+	/// max_levels: including base level. Cannot be zero!
+	MipIndex(Vec2i size, int max_levels)
+	{
+		CHECK_GT_F(max_levels, 0);
+
+		int offset = 0;
+
+		sizes.push_back(size);
+		offsets.push_back(offset);
+
+		for (int l = 1; l < max_levels; ++l) {
+			offset += size.x * size.y;
+			size = (size + Vec2i(1, 1)) / 2;
+			if (size.x > 1 || size.y > 1) {
+				sizes.push_back(size);
+				offsets.push_back(offset);
+			} else {
+				break;
+			}
+		}
+
+		CHECK_LE_F(num_levels(), max_levels);
+	}
+
+	Vec2i base_size() const
+	{
+		return sizes[0];
+	}
+
+	int num_levels() const
+	{
+		return sizes.size();
+	}
+
+	int num_values() const
+	{
+		return offsets.back() + sizes.back().x * sizes.back().y;
+	}
+
+	/// We index the values row-wise, starting at level 0
+	int index(int level, Vec2i pos) const
+	{
+		CHECK_F(0 <= level && level < num_levels());
+		CHECK_F(0 <= pos.x && pos.x < sizes[level].x);
+		CHECK_F(0 <= pos.y && pos.y < sizes[level].y);
+		return offsets[level] + pos.y * sizes[level].x + pos.x;
+	}
+};
+
+std::vector<float> generate_mip_sum(const MipIndex& index, const Matrixf& base_weights)
+{
+	std::vector<float> mip;
+	mip.reserve(index.num_values());
+	mip = base_weights.as_vec();
+	mip.resize(index.num_values(), 0.0f);
+
+	for (const int level : irange(index.num_levels() - 1)) {
+		for (const int y : irange(index.sizes[level].y)) {
+			for (const int x : irange(index.sizes[level].x)) {
+				const int this_index = index.index(level, Vec2i(x, y));
+				const int above_index = index.index(level + 1, Vec2i(x / 2, y / 2));
+				mip[above_index] += mip[this_index];
+			}
+		}
+	}
+
+	return mip;
+}
 
 struct Result
 {
 	fi::LinearEquation eq;
-	Matrixf            field;
-	std::string        log; // Log captured during solving
+	MipIndex           mip_index;
+	std::vector<float> solution; ///< All mip levels.
+	Matrixf            field;    ///< Lowest mip level
+	std::string        log;      ///< Log captured during solving
 };
 
 void log_errors(const std::string& msg)
@@ -92,46 +174,8 @@ void log_errors(const std::string& msg)
 	LOG_F(ERROR, "%s", msg.c_str());
 }
 
-fi::LinearEquation generate_equation(const Options& options, const Matrixf& last_solution)
+void add_tower_weights(fi::LinearEquation* eq, const Options& options, const float* last_field)
 {
-	LOG_SCOPE_F(1, "generate_equation");
-
-	CHECK_EQ_F(options.in_values.width(), options.in_weights.width());
-	CHECK_EQ_F(options.in_values.height(), options.in_weights.height());
-	CHECK_EQ_F(options.in_values.height(), last_solution.height());
-	CHECK_EQ_F(options.in_values.height(), last_solution.height());
-
-	const int width = options.in_values.width();
-	const int height = options.in_values.height();
-
-	const auto coord = [=](int x, int y) {
-		x = (x + width)  % width;
-		y = (y + height) % height;
-		return y * width + x;
-	};
-
-	fi::LinearEquation eq;
-
-	for (const int y : irange(height)) {
-		for (const int x : irange(width)) {
-			if (options.wrapping || (0 < x && x < width - 1)) {
-				add_equation(&eq, fi::Weight{options.smoothness}, fi::Rhs{0.0f}, {
-					{coord(x-1, y), +1.0f},
-					{coord(x,   y), -2.0f},
-					{coord(x+1, y), +1.0f},
-				});
-			}
-
-			if (options.wrapping || (0 < y && y < height - 1)) {
-				add_equation(&eq, fi::Weight{options.smoothness}, fi::Rhs{0.0f}, {
-					{coord(x, y-1), +1.0f},
-					{coord(x, y),   -2.0f},
-					{coord(x, y+1), +1.0f},
-				});
-			}
-		}
-	}
-
 	for (const int i : indices(options.in_values)) {
 		float v = options.in_values[i];
 		float w = options.in_weights[i];
@@ -143,14 +187,116 @@ fi::LinearEquation generate_equation(const Options& options, const Matrixf& last
 		const bool add_constraint =
 			options.bilateral
 			|| v == 0.0f
-			|| std::fabs(last_solution[i]) <= std::fabs(v);
+			|| std::fabs(last_field[i]) <= std::fabs(v);
 
 		if (add_constraint) {
-			fi::add_equation(&eq, fi::Weight{w}, fi::Rhs{v}, {{i, 1.0f}});
+			fi::add_equation(eq, fi::Weight{w}, fi::Rhs{v}, {{i, 1.0f}});
 		}
 	}
+}
 
-	// TODO: add self-sustaining weights (blue area wants to stay blue)
+void add_smoothness(fi::LinearEquation* eq, int offset, Vec2i size, float weight, bool wrapping)
+{
+	const auto coord = [=](int x, int y) {
+		x = (x + size.x) % size.x;
+		y = (y + size.y) % size.y;
+		return offset + y * size.x + x;
+	};
+
+	for (const int y : irange(size.y)) {
+		for (const int x : irange(size.x)) {
+			if (size.x >= 3 && (wrapping || (0 < x && x < size.x - 1))) {
+				add_equation(eq, fi::Weight{weight}, fi::Rhs{0.0f}, {
+					{coord(x-1, y), +1.0f},
+					{coord(x,   y), -2.0f},
+					{coord(x+1, y), +1.0f},
+				});
+			}
+
+			if (size.y >= 3 && (wrapping || (0 < y && y < size.y - 1))) {
+				add_equation(eq, fi::Weight{weight}, fi::Rhs{0.0f}, {
+					{coord(x, y-1), +1.0f},
+					{coord(x, y),   -2.0f},
+					{coord(x, y+1), +1.0f},
+				});
+			}
+		}
+	}
+}
+
+// Add connections between mip levels
+void add_mip_connections(fi::LinearEquation* eq, const Options& options, const MipIndex& mip_index, const std::vector<float>& weight_mip)
+{
+	for (const auto l : irange(1, mip_index.num_levels())) {
+		for (const int y : irange(mip_index.sizes[l].y)) {
+			for (const int x : irange(mip_index.sizes[l].x)) {
+				const int row = eq->rhs.size();
+
+				// For example:
+				//  (L:0, x:4, y:6) + (L:0, x:5, y:6) +
+				//  (L:0, x:4, y:7) + (L:0, x:5, y:7)
+				//                  =
+				//       (L:1, x:2, y:3) * 4
+
+				const Vec2i below_size = mip_index.sizes[l - 1];
+				float sum_weight = 0.0;
+
+				for (const int dy : irange(2)) {
+					for (const int dx : irange(2)) {
+						const auto below = Vec2i(2 * x + dx, 2 * y + dy);
+						if (below.x < below_size.x && below.y < below_size.y) {
+							const int below_index = mip_index.index(l - 1, below);
+							const float weight = weight_mip[below_index] * options.mip_connection_strength;
+							if (weight > 0.0f) {
+								eq->triplets.emplace_back(row, below_index, weight);
+								sum_weight += weight;
+							}
+						}
+					}
+				}
+
+				if (sum_weight > 0.0f) {
+					const int above_index = mip_index.index(l, Vec2i(x, y));
+					eq->triplets.emplace_back(row, above_index, -sum_weight);
+					eq->rhs.emplace_back(0.0f);
+				}
+			}
+		}
+	}
+}
+
+fi::LinearEquation generate_equation(const Options& options, const MipIndex& mip_index, const float* last_field)
+{
+	LOG_SCOPE_F(1, "generate_equation");
+
+	CHECK_EQ_F(options.in_values.width(), options.in_weights.width());
+	CHECK_EQ_F(options.in_values.height(), options.in_weights.height());
+
+	auto size = Vec2i(options.in_values.width(), options.in_values.height());
+
+	Matrixf base_weights = options.in_weights;
+	for (float& w : base_weights) {
+		if (w <= 0.0f) {
+			w = options.regularization;
+		}
+	}
+	const auto weights_mip = generate_mip_sum(mip_index, base_weights);
+
+	fi::LinearEquation eq;
+	add_tower_weights(&eq, options, last_field);
+	// TODO: add self-sustaining weights (blue area wants to stay blue) ?
+
+	// Add smoothness for each level:
+	for (const auto l : irange(0, mip_index.num_levels())) {
+		const int scale_factor = (1 << l);
+		// TODO: how do we factor in scale_factor?
+		// On one hand: higher up = less smooth (because the smoothness is local)
+		// On the other hand: higher up there are less constraints, so they need to be stronger.
+		const float smoothness = options.smoothness / scale_factor;
+		add_smoothness(&eq, mip_index.offsets[l], mip_index.sizes[l], smoothness, options.wrapping);
+	}
+
+	add_mip_connections(&eq, options, mip_index, weights_mip);
 
 	return eq;
 }
@@ -159,6 +305,41 @@ void ram_logger(void* user_data, const loguru::Message& msg)
 {
 	std::string* log = reinterpret_cast<std::string*>(user_data);
 	*log += emilib::strprintf("%s%s%s\n", msg.indentation, msg.prefix, msg.message);
+}
+
+Result generate(const Options& options, std::vector<float> last_solution)
+{
+	const bool first_time = last_solution.empty();
+
+	const auto base_size = Vec2i(options.in_values.width(), options.in_values.height());
+
+	Result result;
+	loguru::add_callback("ram_logger", ram_logger, &result.log, loguru::Verbosity_MAX);
+
+	result.mip_index = MipIndex(base_size, options.max_mip_levels);
+	last_solution.resize(result.mip_index.num_values(), 0.0f);
+	result.eq = generate_equation(options, result.mip_index, last_solution.data());
+
+	if (first_time) {
+		result.solution = fi::solve_sparse_linear_exact(result.eq, last_solution.size());
+		// result.solution = fi::solve_sparse_linear_fast(result.eq, last_solution.size());
+	} else {
+		if (options.cg) {
+			result.solution = fi::solve_sparse_linear_with_guess(result.eq, last_solution, options.solve_iterations, 0.0f);
+		} else {
+			result.solution = fi::jacobi_iterations(result.eq, last_solution, options.solve_iterations, options.jacobi_weight);
+		}
+	}
+
+	if (result.solution.empty()) {
+		LOG_F(ERROR, "Failed to solve");
+		result.solution = last_solution;
+	}
+
+	result.field = Matrixf(base_size.x, base_size.y, result.solution.data());
+
+	loguru::remove_callback("ram_logger");
+	return result;
 }
 
 RGBA as_color(float field)
@@ -190,32 +371,23 @@ ImageRGBA as_image(const Matrixf& field)
 	return img;
 }
 
-Result generate(const Options& options, Matrixf last_solution)
+ImageRGBA mip_image(const Result& result)
 {
-	const bool first_time = last_solution.empty();
+	ImageRGBA image;
+	for (const int level : irange(result.mip_index.num_levels())) {
+		const Vec2i level_size = result.mip_index.sizes[level];
+		const Vec2i img_offset = Vec2i(image.width(), image.height());
+		image.resize(img_offset.x + level_size.x, img_offset.y + level_size.y, RGBA{0,0,0,0});
 
-	const int width = options.in_values.width();
-	const int height = options.in_values.height();
-	last_solution.resize(width, height, 0.0f);
-
-	Result result;
-	loguru::add_callback("ram_logger", ram_logger, &result.log, loguru::Verbosity_MAX);
-
-	result.eq = generate_equation(options, last_solution);
-
-	if (first_time) {
-		result.field = Matrixf(width, height, fi::solve_sparse_linear_exact(result.eq, width * height));
-	} else {
-		// result.field = Matrixf(width, height, fi::solve_sparse_linear_fast(result.eq, width * height));
-		if (options.cg) {
-			result.field = Matrixf(width, height, fi::solve_sparse_linear_with_guess(result.eq, last_solution.as_vec(), options.solve_iterations, 0.0f));
-		} else {
-			result.field = Matrixf(width, height, fi::jacobi_iterations(result.eq, last_solution.as_vec(), options.solve_iterations, options.jacobi_weight));
+		for (const int y : irange(level_size.y)) {
+			for (const int x : irange(level_size.x)) {
+				const auto index = result.mip_index.index(level, Vec2i(x, y));
+				const auto value = result.solution[index];
+				image(img_offset.x + x, img_offset.y + y) = as_color(value);
+			}
 		}
 	}
-
-	loguru::remove_callback("ram_logger");
-	return result;
+	return image;
 }
 
 bool show_options(Options* options)
@@ -236,6 +408,11 @@ bool show_options(Options* options)
 	changed |= ImGui::SliderFloat("regularization", &options->regularization, 0.0f,  1.0f, "%.3f", 4);
 	changed |= ImGui::Checkbox("bilateral", &options->bilateral);
 	changed |= ImGui::Checkbox("wrapping", &options->wrapping);
+
+	changed |= ImGui::SliderInt("max_mip_levels", &options->max_mip_levels, 1, 10);
+	if (options->max_mip_levels > 1) {
+		changed |= ImGui::SliderFloat("mip_connection_strength", &options->mip_connection_strength, 0.0f,  10.0f, "%.3f", 4);
+	}
 	changed |= ImGui::Checkbox("CG solver", &options->cg);
 	changed |= ImGui::SliderInt("solve_iterations", &options->solve_iterations, 1, 500);
 	if (!options->cg) {
@@ -390,12 +567,8 @@ struct FieldGui
 	Options     options;
 	Result      result;
 	Matrixf     highres_field;
-	ImageRGBA   in_values_image;
-	ImageRGBA   in_weights_image;
-	ImageRGBA   field_image;
-	gl::Texture in_values_texture{ "values",  gl::TexParams::clamped_linear()};
-	gl::Texture in_weights_texture{"weights", gl::TexParams::clamped_linear()};
-	gl::Texture field_texture{     "field",   gl::TexParams::clamped_linear()};
+	gl::Texture field_texture{ "field", gl::TexParams::clamped_linear()};
+	gl::Texture mip_texture{   "mip",   gl::TexParams::clamped_linear()};
 	bool        show_towers      = false;
 	int         field_upsampling = 4;
 
@@ -416,17 +589,11 @@ struct FieldGui
 
 	void calc()
 	{
-		result = generate(options, result.field);
-
-		in_values_image = as_image(options.in_values);
-		in_weights_image = as_image(options.in_weights);
-
+		result = generate(options, result.solution);
 		highres_field = wrapping_bicubic_upsample(result.field, field_upsampling);
-		field_image = as_image(highres_field);
 
-		set_texture(&in_values_texture, in_values_image);
-		set_texture(&in_weights_texture, in_weights_image);
-		set_texture(&field_texture, field_image);
+		set_texture(&field_texture, as_image(highres_field));
+		set_texture(&mip_texture, mip_image(result));
 	}
 
 	void show_input()
@@ -504,26 +671,31 @@ struct FieldGui
 
 		show_texture_options(&field_texture);
 		ImGui::SameLine();
-		if (ImGui::Button("Save images")) {
-			save_tga("in_values.tga",  in_values_image);
-			save_tga("in_weights.tga", in_weights_image);
-			save_tga("out_field.tga",  field_image);
-		}
 
 		ImGui::Separator();
 
-		in_values_texture.set_params(field_texture.params());
-		in_weights_texture.set_params(field_texture.params());
-		field_texture.bind(); in_values_texture.bind(); in_weights_texture.bind(); // HACK to apply the params
+		mip_texture.set_params(field_texture.params());
+		field_texture.bind(); mip_texture.bind(); // HACK to apply the params
 
 		const ImVec2 available = ImGui::GetContentRegionAvail();
 		const auto canvas_size = imgui_helpers::aspect_correct_image_size(
 			ImVec2(w, h), available, ImVec2(128, 128));
 
-		{
-			ImGui::Text("field_texture:");
-			const ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
-			const auto out_rect = AABB2f::from_min_size(canvas_pos, canvas_size);
+		static bool s_show_mips = false;
+		if (ImGui::RadioButton("Field", s_show_mips == false)) {
+			s_show_mips = false;
+		}
+		ImGui::SameLine();
+		if (ImGui::RadioButton("Mip levels", s_show_mips == true)) {
+			s_show_mips = true;
+		}
+
+		const ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
+		const auto out_rect = AABB2f::from_min_size(canvas_pos, canvas_size);
+
+		if (s_show_mips) {
+			ImGui::Image(reinterpret_cast<ImTextureID>(mip_texture.id()), canvas_size);
+		} else {
 			ImGui::Image(reinterpret_cast<ImTextureID>(field_texture.id()), canvas_size);
 			paint_iso_lines(canvas_pos, canvas_size);
 			if (show_towers) {
